@@ -1,6 +1,7 @@
 """Command-line interface: ``stratarena run`` and ``stratarena report``."""
 
 import logging
+import os
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -61,6 +62,16 @@ def run(
     cfg = RunConfig.model_validate(data)
 
     configure_logging(level=logging.WARNING if quiet else logging.INFO, json=log_json)
+    if (
+        cfg.agents.enabled
+        and cfg.agents.llm.provider == "anthropic"
+        and not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    ):
+        typer.echo(
+            "warning: ANTHROPIC_API_KEY is not set; LLM calls will fail unless an "
+            "Anthropic CLI profile provides credentials",
+            err=True,
+        )
     result = run_search(make_problem(cfg.problem, cfg.problem_options), cfg)
     run_dir = write_run(result, out / run_name(result))
 

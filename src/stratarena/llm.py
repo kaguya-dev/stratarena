@@ -139,6 +139,8 @@ class AnthropicLLM:
             raise LLMError(f"{self.name}: HTTP {e.status_code}: {e.message}") from e
         except anthropic.APIConnectionError as e:
             raise LLMError(f"{self.name}: connection error") from e
+        except TypeError as e:  # raised by the SDK when no credentials can be resolved
+            raise LLMError(f"{self.name}: no credentials ({e}); set ANTHROPIC_API_KEY") from e
         if response.stop_reason == "refusal":
             raise LLMError(f"{self.name}: request declined")
         text = "".join(block.text for block in response.content if block.type == "text")

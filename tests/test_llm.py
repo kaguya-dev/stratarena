@@ -106,3 +106,13 @@ def test_make_llm(tmp_path: Path) -> None:
     assert make_llm(LLMConfig()) is None
     llm = make_llm(LLMConfig(provider="ollama", model="x", cache_dir=str(tmp_path)))
     assert llm is not None and llm.name == "ollama/x"
+
+
+def test_anthropic_missing_credentials_is_an_llm_error() -> None:
+    class NoAuth:
+        def create(self, **kwargs: Any) -> Any:
+            raise TypeError("Could not resolve authentication method")
+
+    client = SimpleNamespace(beta=SimpleNamespace(messages=NoAuth()))
+    with pytest.raises(LLMError, match="no credentials"):
+        AnthropicLLM(client=client).complete("s", "p")
