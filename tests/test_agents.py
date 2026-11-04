@@ -100,18 +100,25 @@ def test_orchestrator_merges_in_task_order(ctx: AgentContext) -> None:
     def answer(system: str, prompt: str) -> str:
         return "Fine." if "weaknesses" in prompt else GOOD
 
-    cfg = AgentsConfig(enabled=True, code_candidates=3, tuner_candidates=1, tuner_iterations=3)
+    cfg = AgentsConfig(
+        enabled=True,
+        code_candidates=3,
+        fusion_candidates=1,
+        tuner_candidates=1,
+        tuner_iterations=3,
+    )
     proposal = Orchestrator(cfg, ScriptedLLM(answer)).propose(ctx)
     ids = [s.id for s in proposal.strategies]
-    assert ids[:3] == ["g1-llm00", "g1-llm01", "g1-llm02"]
-    assert sum(e.action == "reviewed" for e in proposal.events) == 3
-    assert len(proposal.notes) == 3
+    assert ids[:4] == ["g1-llm00", "g1-llm01", "g1-llm02", "g1-fx00"]
+    assert sum(e.action == "reviewed" for e in proposal.events) == 4
+    assert len(proposal.notes) == 4
 
 
 def test_orchestrator_without_llm_only_tunes(ctx: AgentContext) -> None:
     cfg = AgentsConfig(enabled=True, tuner_iterations=3)
     orchestrator = Orchestrator(cfg, None)
     assert orchestrator.generator is None and orchestrator.critic is None
+    assert orchestrator.fusion is None
     assert all(s.id.startswith("g1-t") for s in orchestrator.propose(ctx).strategies)
 
 
@@ -166,3 +173,25 @@ def test_search_with_agents_end_to_end(tmp_path: Path) -> None:
     assert data["agents"]["llm_requests"] == len(result.exchanges) > 0
     assert (run_dir / "agents" / "llm_exchanges.jsonl").is_file()
     assert "## Agents" in (run_dir / "report.md").read_text()
+
+
+def test_fusion_pairs() -> None:
+    from stratarena.hybridizer import fusion_pairs
+
+    assert fusion_pairs(4, 4) == [(0, 1), (0, 2), (1, 2), (0, 3)]
+    assert fusion_pairs(1, 3) == []
+
+
+def test_fusion_merges_two_parents(ctx: AgentContext) -> None:
+    from stratarena.hybridizer import CodeFusionHybridizer
+
+    a, b = ctx.finalists[0], CodeStrategy("code-parent", CODE_EXAMPLE, "pack")
+    llm = ScriptedLLM([BROKEN, GOOD])
+    proposal = CodeFusionHybridizer(llm, LIMITS, max_attempts=2).fuse(ctx, 0, a, b)
+    (child,) = proposal.strategies
+    assert isinstance(child, CodeStrategy)
+    assert child.id == "g1-fx00" and child.parents == (a.id, "code-parent")
+    assert child.origin == "fusion:scripted"
+    assert [e.action for e in proposal.events] == ["rejected", "accepted"]
+    prompt = llm.calls[0][1]
+    assert a.id in prompt and "code-parent" in prompt and "combines the strengths" in prompt

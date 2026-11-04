@@ -9,7 +9,14 @@ import typer
 from stratarena.config import RunConfig, load_config
 from stratarena.examples import PROBLEMS, make_problem
 from stratarena.log import configure_logging
-from stratarena.report import REPORT_MD, render_report, run_name, write_run
+from stratarena.report import (
+    REPORT_MD,
+    RUN_JSON,
+    render_report,
+    run_name,
+    summarize_runs,
+    write_run,
+)
 from stratarena.search import run_search
 from stratarena.strategy import ParamStrategy
 
@@ -80,6 +87,24 @@ def report(
 ) -> None:
     """Regenerate report.md and evolution.png from a run's run.json."""
     typer.echo(render_report(run_dir))
+
+
+@app.command()
+def summary(
+    run_dirs: Annotated[
+        list[Path], typer.Argument(exists=True, help="Run directories, or folders of runs.")
+    ],
+) -> None:
+    """Print a Markdown table of champions vs. their best baseline on held-out instances."""
+    found: list[Path] = []
+    for path in run_dirs:
+        if (path / RUN_JSON).is_file():
+            found.append(path)
+        else:
+            found += sorted(p.parent for p in path.glob(f"*/{RUN_JSON}"))
+    if not found:
+        raise typer.BadParameter(f"no {RUN_JSON} found")
+    typer.echo(summarize_runs(found), nl=False)
 
 
 def main() -> None:

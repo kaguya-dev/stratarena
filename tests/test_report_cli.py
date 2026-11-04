@@ -131,3 +131,18 @@ def test_problem_label() -> None:
     assert problem_label({"problem": "x", "problem_options": {}}) == "x"
     label = problem_label({"problem": "x", "problem_options": {"profiles": ["a", "b"], "n": 3}})
     assert label == "x (n=3, profiles=a,b)"
+
+
+def test_summary_command(tmp_path: Path, config_file: Path) -> None:
+    for seed in ("1", "2"):
+        args = ["run", "--config", str(config_file), "--seed", seed, "--out", str(tmp_path)]
+        assert runner.invoke(app, [*args, "--quiet"]).exit_code == 0
+    res = runner.invoke(app, ["summary", str(tmp_path)])
+    assert res.exit_code == 0, res.output
+    rows = [line for line in res.output.splitlines() if line.startswith("| binpacking")]
+    assert len(rows) == 2
+    assert "first-fit" in res.output or "best-fit" in res.output
+    assert runner.invoke(app, ["summary", str(tmp_path / "nothing")]).exit_code != 0
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert runner.invoke(app, ["summary", str(empty)]).exit_code != 0

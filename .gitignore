@@ -10,3 +10,4 @@ htmlcov/
 dist/
 runs/
 .stratarena-cache/
+results/runs/

@@ -73,6 +73,8 @@ class AgentsConfig(BaseModel):
     """Code strategies the generator writes per generation (needs an LLM)."""
     max_attempts: int = Field(default=2, ge=1)
     """Tries per code candidate; failed attempts are retried with the error as feedback."""
+    fusion_candidates: int = Field(default=1, ge=0)
+    """Children an LLM writes by merging two finalists (needs an LLM)."""
     critic: bool = True
     """Review accepted code candidates and feed the notes to the next generation."""
     tuner_candidates: int = Field(default=2, ge=0)

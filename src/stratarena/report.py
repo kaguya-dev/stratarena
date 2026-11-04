@@ -374,3 +374,40 @@ def plot_evolution(data: dict[str, Any], out: Path) -> None:
     fig.tight_layout()
     fig.savefig(out, metadata={"Software": None})
     plt.close(fig)
+
+
+def summarize_runs(run_dirs: list[Path]) -> str:
+    """Markdown table comparing the champion of each run with its best baseline.
+
+    Δ is the paired held-out difference "best baseline minus champion" with its 95%
+    bootstrap interval: negative means the champion is better.
+    """
+    lines = [
+        "| Problem | Seed | Champion | Held-out [95% CI] | Best baseline | "
+        "Δ baseline - champion [95% CI] |",
+        "|---|---|---|---|---|---|",
+    ]
+    runs = [json.loads((d / RUN_JSON).read_text(encoding="utf-8")) for d in run_dirs]
+    runs.sort(key=lambda r: (problem_label(r["config"]), r["config"]["seed"]))
+    for data in runs:
+        cfg, val, champ = data["config"], data["validation"], data["champion"]
+        entries = {e["strategy_id"]: e for e in val["entries"]}
+        label = problem_label(cfg)
+        if cfg.get("sparring"):
+            label += ", sparring"
+        if cfg.get("agents", {}).get("enabled"):
+            label += f", agents ({data['agents']['llm'] or 'no LLM'})"
+        baselines = [e for e in val["entries"] if e["kind"] == "baseline"]
+        best = max(baselines, key=lambda e: e["holdout"]["mean"]) if baselines else None
+        if best is None:
+            base_cell, diff_cell = "—", "—"
+        else:
+            d = best["diff_vs_champion"]
+            base_cell = f"`{best['strategy_id']}` {best['holdout']['mean']:.4f}"
+            diff_cell = f"{d['mean']:+.4f} [{d['low']:+.4f}, {d['high']:+.4f}]"
+        kind = "code" if champ["kind"] == "code" else "param"
+        lines.append(
+            f"| {label} | {cfg['seed']} | `{champ['id']}` ({kind}) "
+            f"| {_ci(entries[champ['id']]['holdout'])} | {base_cell} | {diff_cell} |"
+        )
+    return "\n".join(lines) + "\n"

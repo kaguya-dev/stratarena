@@ -7,6 +7,7 @@ from stratarena.agents.critic import CriticAgent
 from stratarena.agents.generator import CodeGeneratorAgent
 from stratarena.agents.tuner import ParamTunerAgent
 from stratarena.config import AgentsConfig
+from stratarena.hybridizer import CodeFusionHybridizer, fusion_pairs
 from stratarena.llm import LLM
 from stratarena.log import get_logger
 from stratarena.sandbox import SandboxLimits
@@ -18,8 +19,9 @@ log = get_logger(__name__)
 class Orchestrator:
     """Splits the work of proposing the next generation's candidates between agents.
 
-    Phase 1 runs in parallel threads: each code candidate is its own generator task (LLM
-    calls are I/O-bound), next to the parameter tuner. Phase 2 has the critic review every
+    Phase 1 runs in parallel threads: each code candidate is its own generator task and
+    each LLM fusion of two finalists its own hybridizer task (LLM calls are I/O-bound),
+    next to the parameter tuner. Phase 2 has the critic review every
     accepted code candidate, also in parallel. Results are merged in task order, never in
     completion order, so the output does not depend on timing.
     """
@@ -36,9 +38,14 @@ class Orchestrator:
             if llm is not None and config.code_candidates > 0
             else None
         )
+        self.fusion = (
+            CodeFusionHybridizer(llm, limits, config.max_attempts, config.smoke_instances)
+            if llm is not None and config.fusion_candidates > 0
+            else None
+        )
         self.critic = (
             CriticAgent(llm, config.smoke_instances)
-            if llm is not None and config.critic and self.generator is not None
+            if llm is not None and config.critic and (self.generator or self.fusion)
             else None
         )
         self.tuner = (
@@ -55,6 +62,12 @@ class Orchestrator:
                 total = cfg.code_candidates
                 tasks += [
                     pool.submit(self.generator.propose_one, ctx, i, total) for i in range(total)
+                ]
+            if self.fusion is not None:
+                pairs = fusion_pairs(len(ctx.finalists), cfg.fusion_candidates)
+                tasks += [
+                    pool.submit(self.fusion.fuse, ctx, k, ctx.finalists[i], ctx.finalists[j])
+                    for k, (i, j) in enumerate(pairs)
                 ]
             if self.tuner is not None:
                 tasks.append(pool.submit(self.tuner.propose, ctx, cfg.tuner_candidates))

@@ -80,42 +80,69 @@ class CodeGeneratorAgent:
         if not isinstance(ctx.problem, HasCodeSpec):
             return Proposal()
         spec = ctx.problem.code_spec()
-        sid = f"g{ctx.generation + 1}-llm{index:02d}"
-        base_prompt = self.prompt(ctx, spec, index, total)
-        events = []
-        error = ""
-        for attempt in range(1, self.max_attempts + 1):
-            prompt = base_prompt
-            if error:
-                prompt += f"\n\n## Your previous attempt was rejected\n\n{error}\nFix it."
-            try:
-                reply = self.llm.complete(SYSTEM, prompt)
-            except LLMError as e:
-                events.append(AgentEvent(self.name, ctx.generation, "failed", sid, str(e)))
-                return Proposal(events=tuple(events))
-            source = extract_code(reply, spec.entrypoint)
-            if source is None:
-                error = f"No ```python block defining `{spec.entrypoint}` was found."
-            elif (problem := check_source(source, spec.entrypoint, self.limits)) is not None:
-                error = f"Loading the code failed: {problem}"
-            else:
-                candidate = CodeStrategy(
-                    id=sid,
-                    source=source,
-                    entrypoint=spec.entrypoint,
-                    parents=tuple(f.id for f in ctx.finalists[:2]),
-                    origin=f"{self.name}:{self.llm.name}",
-                    limits=self.limits,
-                )
-                smoke = smoke_test(ctx, candidate, self.smoke_instances)
-                if smoke.error is None:
-                    detail = f"attempt {attempt}, smoke mean {smoke.mean:.4f}"
-                    events.append(AgentEvent(self.name, ctx.generation, "accepted", sid, detail))
-                    return Proposal((candidate,), tuple(events))
-                error = f"The code ran but failed the smoke test: {smoke.error}"
-            events.append(
-                AgentEvent(
-                    self.name, ctx.generation, "rejected", sid, f"attempt {attempt}: {error}"
-                )
+        return write_code(
+            llm=self.llm,
+            agent=self.name,
+            ctx=ctx,
+            spec=spec,
+            sid=f"g{ctx.generation + 1}-llm{index:02d}",
+            parents=tuple(f.id for f in ctx.finalists[:2]),
+            prompt=self.prompt(ctx, spec, index, total),
+            limits=self.limits,
+            max_attempts=self.max_attempts,
+            smoke_instances=self.smoke_instances,
+        )
+
+
+def write_code(
+    *,
+    llm: LLM,
+    agent: str,
+    ctx: AgentContext,
+    spec: CodeSpec,
+    sid: str,
+    parents: tuple[str, ...],
+    prompt: str,
+    limits: SandboxLimits,
+    max_attempts: int,
+    smoke_instances: int,
+) -> Proposal:
+    """Ask the LLM for code until it passes every check, retrying with the error.
+
+    A candidate is admitted only if the answer contains a code block defining the
+    entrypoint, the code loads in the sandbox, and it passes the smoke test.
+    """
+    events = []
+    error = ""
+    for attempt in range(1, max_attempts + 1):
+        request = prompt
+        if error:
+            request += f"\n\n## Your previous attempt was rejected\n\n{error}\nFix it."
+        try:
+            reply = llm.complete(SYSTEM, request)
+        except LLMError as e:
+            events.append(AgentEvent(agent, ctx.generation, "failed", sid, str(e)))
+            return Proposal(events=tuple(events))
+        source = extract_code(reply, spec.entrypoint)
+        if source is None:
+            error = f"No ```python block defining `{spec.entrypoint}` was found."
+        elif (problem := check_source(source, spec.entrypoint, limits)) is not None:
+            error = f"Loading the code failed: {problem}"
+        else:
+            candidate = CodeStrategy(
+                id=sid,
+                source=source,
+                entrypoint=spec.entrypoint,
+                parents=parents,
+                origin=f"{agent}:{llm.name}",
+                limits=limits,
             )
-        return Proposal(events=tuple(events))
+            smoke = smoke_test(ctx, candidate, smoke_instances)
+            if smoke.error is None:
+                detail = f"attempt {attempt}, smoke mean {smoke.mean:.4f}"
+                events.append(AgentEvent(agent, ctx.generation, "accepted", sid, detail))
+                return Proposal((candidate,), tuple(events))
+            error = f"The code ran but failed the smoke test: {smoke.error}"
+        detail = f"attempt {attempt}: {error}"
+        events.append(AgentEvent(agent, ctx.generation, "rejected", sid, detail))
+    return Proposal(events=tuple(events))
