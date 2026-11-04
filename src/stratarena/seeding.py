@@ -19,6 +19,7 @@ class Stream(IntEnum):
     INIT = 2
     BOOTSTRAP = 3
     VARIATION = 4
+    TRACKING = 5
 
 
 def seed_sequence(root: int, stream: Stream, *path: int) -> np.random.SeedSequence:

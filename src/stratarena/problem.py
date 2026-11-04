@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, runtime_checkable
 
 from stratarena.strategy import ParamSpace, ParamStrategy
 
@@ -38,3 +38,10 @@ class Problem(Protocol[InstanceT]):
     def evaluate(self, strategy: ParamStrategy, instance: InstanceT) -> EvalResult:
         """Run ``strategy`` on ``instance``."""
         ...
+
+
+@runtime_checkable
+class HasBaselines(Protocol):
+    """Optional: a problem can provide known heuristics to compare the search against."""
+
+    def baselines(self) -> list[ParamStrategy]: ...

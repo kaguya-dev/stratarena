@@ -38,7 +38,10 @@ class BinPackingInstance:
 
 
 class BinPacking:
-    """Bin packing instances drawn from three item-size profiles (small, large, bimodal)."""
+    """Bin packing instances drawn from four item-size profiles.
+
+    The profiles are small, large, "just over a quarter" and bimodal items.
+    """
 
     name = "binpacking"
 
@@ -51,14 +54,28 @@ class BinPacking:
     def param_space(self) -> ParamSpace:
         return SPACE
 
+    def baselines(self) -> list[ParamStrategy]:
+        """The four classic heuristics, expressed as points of the parameter space."""
+        presets = {
+            "first-fit": (0.0, 0.0, 1.0),
+            "best-fit": (0.0, 1.0, 0.0),
+            "first-fit-decreasing": (1.0, 0.0, 1.0),
+            "best-fit-decreasing": (1.0, 1.0, 0.0),
+        }
+        return [ParamStrategy(name, values, SPACE) for name, values in presets.items()]
+
     def generate_instance(self, seed: int) -> BinPackingInstance:
         rng = np.random.default_rng(seed)
         c = self.capacity
-        profile = int(rng.integers(3))
+        profile = int(rng.integers(4))
         if profile == 0:
             sizes = rng.uniform(0.05 * c, 0.6 * c, self.n_items)
         elif profile == 1:
             sizes = rng.uniform(0.2 * c, 0.7 * c, self.n_items)
+        elif profile == 2:
+            # Items just over a quarter to half a bin: at most three fit, and greedy
+            # pairings waste space, so the classic heuristics leave room to improve.
+            sizes = rng.uniform(0.26 * c, 0.5 * c, self.n_items)
         else:
             small = rng.uniform(0.05 * c, 0.25 * c, self.n_items)
             large = rng.uniform(0.5 * c, 0.8 * c, self.n_items)

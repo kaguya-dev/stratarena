@@ -1,25 +1,21 @@
 """Battle-royale arena: evaluate on fresh instances, eliminate the weakest, repeat."""
 
 import math
-import multiprocessing
-from collections.abc import Callable, Iterable, Iterator, Sequence
-from concurrent.futures import ProcessPoolExecutor
-from contextlib import contextmanager
+from collections.abc import Sequence
 from dataclasses import dataclass
-from functools import partial
 from typing import Any
 
 import numpy as np
 
 from stratarena.config import ArenaConfig
+from stratarena.evaluation import Evaluator
 from stratarena.log import get_logger
 from stratarena.problem import Problem
 from stratarena.seeding import Stream, derive_seed, make_rng
+from stratarena.stats import mean_ci, resample_indices
 from stratarena.strategy import ParamStrategy
 
 log = get_logger(__name__)
-
-Mapper = Callable[[Callable[[int], list[float]], Iterable[int]], Iterator[list[float]]]
 
 
 @dataclass(frozen=True)
@@ -50,14 +46,6 @@ class ArenaResult:
     scores: dict[str, tuple[float, ...]]
 
 
-def evaluate_on_instance(
-    problem: Problem[Any], strategies: Sequence[ParamStrategy], seed: int
-) -> list[float]:
-    """Score every strategy on the instance ``seed``. Runs inside worker processes."""
-    instance = problem.generate_instance(seed)
-    return [problem.evaluate(s, instance).score for s in strategies]
-
-
 def bootstrap_standings(
     scores: dict[str, list[float]], rng: np.random.Generator, samples: int
 ) -> list[Standing]:
@@ -68,13 +56,8 @@ def bootstrap_standings(
     """
     ids = sorted(scores)
     n = len(scores[ids[0]])
-    idx = rng.integers(0, n, size=(samples, n))
-    standings = []
-    for sid in ids:
-        arr = np.asarray(scores[sid], dtype=float)
-        means = arr[idx].mean(axis=1)
-        low, high = np.percentile(means, [2.5, 97.5])
-        standings.append(Standing(sid, float(arr.mean()), float(low), float(high), n))
+    idx = resample_indices(rng, n, samples)
+    standings = [Standing(sid, *mean_ci(scores[sid], idx), n) for sid in ids]
     standings.sort(key=lambda s: (-s.mean, s.strategy_id))
     return standings
 
@@ -93,54 +76,63 @@ class Arena:
         self.config = config
         self.seed = seed
 
-    def run(self, candidates: Sequence[ParamStrategy], generation: int = 0) -> ArenaResult:
+    def run(
+        self,
+        candidates: Sequence[ParamStrategy],
+        generation: int = 0,
+        evaluator: Evaluator | None = None,
+    ) -> ArenaResult:
         ids = [c.id for c in candidates]
         if not candidates:
             raise ValueError("the arena needs at least one candidate")
         if len(set(ids)) != len(ids):
             raise ValueError("candidate ids must be unique")
+        if evaluator is None:
+            with Evaluator(self.config.workers) as own:
+                return self._run(candidates, generation, own)
+        return self._run(candidates, generation, evaluator)
 
+    def _run(
+        self, candidates: Sequence[ParamStrategy], generation: int, evaluator: Evaluator
+    ) -> ArenaResult:
         cfg = self.config
         survivors = list(candidates)
         scores: dict[str, list[float]] = {c.id: [] for c in candidates}
         rounds: list[RoundRecord] = []
         standings: list[Standing] = []
 
-        with self._mapper() as mapper:
-            for r in range(cfg.max_rounds):
-                seeds = tuple(
-                    derive_seed(self.seed, Stream.TRAIN, generation, r, i)
-                    for i in range(cfg.instances_per_round)
-                )
-                task = partial(evaluate_on_instance, self.problem, survivors)
-                for per_instance in mapper(task, seeds):
-                    for strategy, score in zip(survivors, per_instance, strict=True):
-                        scores[strategy.id].append(score)
+        for r in range(cfg.max_rounds):
+            seeds = tuple(
+                derive_seed(self.seed, Stream.TRAIN, generation, r, i)
+                for i in range(cfg.instances_per_round)
+            )
+            for sid, new in evaluator.scores(self.problem, survivors, seeds).items():
+                scores[sid].extend(new)
 
-                rng = make_rng(self.seed, Stream.BOOTSTRAP, generation, r)
-                alive = {s.id: scores[s.id] for s in survivors}
-                standings = bootstrap_standings(alive, rng, cfg.bootstrap_samples)
+            rng = make_rng(self.seed, Stream.BOOTSTRAP, generation, r)
+            alive = {s.id: scores[s.id] for s in survivors}
+            standings = bootstrap_standings(alive, rng, cfg.bootstrap_samples)
 
-                n_drop = 0
-                if len(survivors) > cfg.finalists:
-                    n_drop = max(1, math.floor(len(survivors) * cfg.elimination_fraction))
-                    n_drop = min(n_drop, len(survivors) - cfg.finalists)
-                eliminated = tuple(s.strategy_id for s in standings[len(standings) - n_drop :])
-                survivors = [s for s in survivors if s.id not in eliminated]
-                standings = standings[: len(standings) - n_drop]
+            n_drop = 0
+            if len(survivors) > cfg.finalists:
+                n_drop = max(1, math.floor(len(survivors) * cfg.elimination_fraction))
+                n_drop = min(n_drop, len(survivors) - cfg.finalists)
+            eliminated = tuple(s.strategy_id for s in standings[len(standings) - n_drop :])
+            survivors = [s for s in survivors if s.id not in eliminated]
+            standings = standings[: len(standings) - n_drop]
 
-                rounds.append(RoundRecord(r, seeds, tuple(standings), eliminated))
-                log.info(
-                    "arena.round",
-                    generation=generation,
-                    round=r,
-                    survivors=len(survivors),
-                    eliminated=len(eliminated),
-                    best=standings[0].strategy_id,
-                    best_mean=round(standings[0].mean, 6),
-                )
-                if len(survivors) <= cfg.finalists:
-                    break
+            rounds.append(RoundRecord(r, seeds, tuple(standings), eliminated))
+            log.info(
+                "arena.round",
+                generation=generation,
+                round=r,
+                survivors=len(survivors),
+                eliminated=len(eliminated),
+                best=standings[0].strategy_id,
+                best_mean=round(standings[0].mean, 6),
+            )
+            if len(survivors) <= cfg.finalists:
+                break
 
         by_id = {s.id: s for s in survivors}
         return ArenaResult(
@@ -150,12 +142,3 @@ class Arena:
             standings=tuple(standings),
             scores={sid: tuple(v) for sid, v in scores.items()},
         )
-
-    @contextmanager
-    def _mapper(self) -> Iterator[Mapper]:
-        if self.config.workers == 1:
-            yield map
-            return
-        ctx = multiprocessing.get_context("spawn")
-        with ProcessPoolExecutor(max_workers=self.config.workers, mp_context=ctx) as pool:
-            yield pool.map
