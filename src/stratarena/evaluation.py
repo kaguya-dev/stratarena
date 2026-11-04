@@ -10,7 +10,7 @@ from typing import Any, Self
 
 from stratarena.problem import AnyProblem, GameProblem
 from stratarena.rating import PairStats
-from stratarena.strategy import ParamStrategy
+from stratarena.strategy import Strategy
 
 # Per instance: one score per strategy, plus (a, b, points of a, games) for game problems.
 InstanceOutcome = tuple[list[float], list[tuple[str, str, float, int]]]
@@ -24,15 +24,15 @@ class Evaluation:
     """Head-to-head results (game problems in round-robin mode only)."""
 
 
-def _both_sides(problem: GameProblem[Any], a: ParamStrategy, b: ParamStrategy, inst: Any) -> float:
+def _both_sides(problem: GameProblem[Any], a: Strategy, b: Strategy, inst: Any) -> float:
     """Points of ``a`` over two games against ``b``, one as each player."""
     return problem.play(a, b, inst) + (1.0 - problem.play(b, a, inst))
 
 
 def evaluate_on_instance(
     problem: AnyProblem,
-    strategies: Sequence[ParamStrategy],
-    opponents: Sequence[ParamStrategy] | None,
+    strategies: Sequence[Strategy],
+    opponents: Sequence[Strategy] | None,
     seed: int,
 ) -> InstanceOutcome:
     """Score every strategy on the instance ``seed``. Runs inside worker processes.
@@ -97,9 +97,9 @@ class Evaluator:
     def evaluate(
         self,
         problem: AnyProblem,
-        strategies: Sequence[ParamStrategy],
+        strategies: Sequence[Strategy],
         seeds: Sequence[int],
-        opponents: Sequence[ParamStrategy] | None = None,
+        opponents: Sequence[Strategy] | None = None,
     ) -> Evaluation:
         task = partial(
             evaluate_on_instance,
@@ -120,9 +120,9 @@ class Evaluator:
     def scores(
         self,
         problem: AnyProblem,
-        strategies: Sequence[ParamStrategy],
+        strategies: Sequence[Strategy],
         seeds: Sequence[int],
-        opponents: Sequence[ParamStrategy] | None = None,
+        opponents: Sequence[Strategy] | None = None,
     ) -> dict[str, list[float]]:
         """Shortcut for ``evaluate(...).scores``."""
         return self.evaluate(problem, strategies, seeds, opponents).scores

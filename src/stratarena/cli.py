@@ -11,6 +11,7 @@ from stratarena.examples import PROBLEMS, make_problem
 from stratarena.log import configure_logging
 from stratarena.report import REPORT_MD, render_report, run_name, write_run
 from stratarena.search import run_search
+from stratarena.strategy import ParamStrategy
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -58,7 +59,11 @@ def run(
 
     v = result.validation
     champ = v.champion
-    typer.echo(f"champion   {result.champion.id}  {result.champion.as_dict()}")
+    champion = result.champion
+    what = (
+        champion.as_dict() if isinstance(champion, ParamStrategy) else f"code ({champion.origin})"
+    )
+    typer.echo(f"champion   {champion.id}  {what}")
     typer.echo(
         f"held-out   {champ.holdout.mean:.4f} [{champ.holdout.ci_low:.4f}, "
         f"{champ.holdout.ci_high:.4f}]  gap {v.generalization_gap:+.4f}"

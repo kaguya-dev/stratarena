@@ -20,10 +20,12 @@ import yaml
 from stratarena import __version__
 from stratarena.arena import ArenaResult, Standing
 from stratarena.search import RunResult
-from stratarena.strategy import ParamStrategy
+from stratarena.strategy import CodeStrategy, ParamStrategy, Strategy
 from stratarena.validation import ValidationResult
 
 RUN_JSON = "run.json"
+STRATEGIES_DIR = "strategies"
+EXCHANGES_JSONL = "agents/llm_exchanges.jsonl"
 REPORT_MD = "report.md"
 EVOLUTION_PNG = "evolution.png"
 
@@ -33,15 +35,25 @@ def run_name(result: RunResult) -> str:
     return f"{cfg.problem}-seed{cfg.seed}-{cfg.fingerprint()}"
 
 
-def _strategy(s: ParamStrategy) -> dict[str, Any]:
-    return {"id": s.id, "params": s.as_dict(), "parents": list(s.parents)}
+def _strategy(s: Strategy) -> dict[str, Any]:
+    if isinstance(s, ParamStrategy):
+        return {"id": s.id, "kind": "param", "params": s.as_dict(), "parents": list(s.parents)}
+    return {
+        "id": s.id,
+        "kind": "code",
+        "entrypoint": s.entrypoint,
+        "origin": s.origin,
+        "sha256": s.digest,
+        "source_file": f"{STRATEGIES_DIR}/{s.id}.py",
+        "parents": list(s.parents),
+    }
 
 
 def _standing(s: Standing) -> dict[str, Any]:
     return asdict(s)
 
 
-def _generation(population: tuple[ParamStrategy, ...], arena: ArenaResult) -> dict[str, Any]:
+def _generation(population: tuple[Strategy, ...], arena: ArenaResult) -> dict[str, Any]:
     return {
         "generation": arena.generation,
         "population": [_strategy(s) for s in population],
@@ -96,6 +108,12 @@ def to_dict(result: RunResult) -> dict[str, Any]:
             for p, a, t in zip(result.populations, result.generations, result.tracking, strict=True)
         ],
         "validation": _validation(result.validation),
+        "agents": {
+            "llm": result.llm,
+            "llm_requests": len(result.exchanges),
+            "llm_cache_hits": sum(e.cached for e in result.exchanges),
+            "events": [asdict(e) for e in result.agent_events],
+        },
     }
 
 
@@ -107,6 +125,19 @@ def write_run(result: RunResult, run_dir: str | Path) -> Path:
     (path / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     data = json.dumps(to_dict(result), indent=2)
     (path / RUN_JSON).write_text(data + "\n", encoding="utf-8")
+    code = {s.id: s for p in result.populations for s in p if isinstance(s, CodeStrategy)}
+    if code:
+        (path / STRATEGIES_DIR).mkdir(exist_ok=True)
+        for sid, strategy in code.items():
+            header = f"# {sid} ({strategy.origin}), sha256 {strategy.digest}\n"
+            (path / STRATEGIES_DIR / f"{sid}.py").write_text(header + strategy.source, "utf-8")
+    if result.exchanges:
+        out = path / EXCHANGES_JSONL
+        out.parent.mkdir(exist_ok=True)
+        lines = sorted(
+            (json.dumps(asdict(e) | {"key": e.key}, ensure_ascii=False) for e in result.exchanges),
+        )
+        out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     render_report(path)
     return path
 
@@ -141,6 +172,46 @@ def _elo(r: float | None) -> str:
     return "—" if r is None else f"{r:.0f}"
 
 
+def _champion_lines(champ: dict[str, Any]) -> list[str]:
+    if champ["kind"] == "param":
+        return [
+            "| Parameter | Value |",
+            "|---|---|",
+            *(f"| {k} | {v:.4f} |" for k, v in champ["params"].items()),
+        ]
+    return [
+        f"Code strategy written by `{champ['origin']}` (sha256 `{champ['sha256']}`); "
+        f"source in [`{champ['source_file']}`]({champ['source_file']})."
+    ]
+
+
+def _cell(text: str, limit: int = 160) -> str:
+    text = " ".join(str(text).split()).replace("|", "\\|")
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _agent_lines(agents: dict[str, Any]) -> list[str]:
+    if not agents["events"]:
+        return []
+    llm = agents["llm"] or "none"
+    lines = [
+        "## Agents",
+        "",
+        f"LLM: `{llm}`, {agents['llm_requests']} requests ({agents['llm_cache_hits']} served "
+        f"from the cache; full transcripts in `{EXCHANGES_JSONL}`). Code candidates must load "
+        "in the sandbox and pass a smoke test before they compete.",
+        "",
+        "| Gen | Agent | Action | Strategy | Detail |",
+        "|---|---|---|---|---|",
+    ]
+    for e in agents["events"]:
+        sid = f"`{e['strategy_id']}`" if e["strategy_id"] else "—"
+        lines.append(
+            f"| {e['generation']} | {e['agent']} | {e['action']} | {sid} | {_cell(e['detail'])} |"
+        )
+    return [*lines, ""]
+
+
 def render_markdown(data: dict[str, Any]) -> str:
     cfg = data["config"]
     val = data["validation"]
@@ -172,9 +243,7 @@ def render_markdown(data: dict[str, Any]) -> str:
         f"`{champ['id']}`"
         + (f", child of {', '.join(champ['parents'])}" if champ["parents"] else ""),
         "",
-        "| Parameter | Value |",
-        "|---|---|",
-        *(f"| {k} | {v:.4f} |" for k, v in champ["params"].items()),
+        *_champion_lines(champ),
         "",
         "## Training, by generation",
         "",
@@ -238,6 +307,7 @@ def render_markdown(data: dict[str, Any]) -> str:
         f"{val['generalization_gap']:+.4f}. Champion's held-out rank among finalists: "
         f"{val['champion_rank']}. {verdict}",
         "",
+        *_agent_lines(data["agents"]),
         "## Evolution",
         "",
         f"![Score by generation]({EVOLUTION_PNG})",

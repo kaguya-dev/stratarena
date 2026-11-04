@@ -1,9 +1,12 @@
 """Strategies: the candidates that compete in the arena."""
 
+import hashlib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
+
+from stratarena.sandbox import SandboxLimits
 
 
 @dataclass(frozen=True)
@@ -77,3 +80,28 @@ class ParamStrategy:
             if spec.name == name:
                 return value
         raise KeyError(name)
+
+
+@dataclass(frozen=True)
+class CodeStrategy:
+    """A strategy written as Python source, typically by an LLM agent.
+
+    The problem calls the function named ``entrypoint`` inside a sandboxed subprocess
+    (see ``stratarena.sandbox``), so the code never runs in the arena's own process.
+    ``origin`` says who wrote it, e.g. ``"generator:ollama/llama3.2"``.
+    """
+
+    id: str
+    source: str
+    entrypoint: str
+    parents: tuple[str, ...] = ()
+    origin: str = ""
+    limits: SandboxLimits = field(default_factory=SandboxLimits)
+
+    @property
+    def digest(self) -> str:
+        """Short SHA-256 of the source, to tell versions apart in reports."""
+        return hashlib.sha256(self.source.encode()).hexdigest()[:12]
+
+
+Strategy = ParamStrategy | CodeStrategy

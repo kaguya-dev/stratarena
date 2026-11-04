@@ -23,6 +23,8 @@ class ParamHybridizer:
     def offspring(
         self, parents: Sequence[ParamStrategy], n: int, generation: int
     ) -> list[ParamStrategy]:
+        if n == 0:
+            return []
         if not parents:
             raise ValueError("need at least one parent")
         cfg = self.config

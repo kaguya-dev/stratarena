@@ -35,8 +35,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from stratarena.problem import EvalResult
-from stratarena.strategy import ParamSpace, ParamSpec, ParamStrategy
+from stratarena.problem import CodeSpec, EvalResult
+from stratarena.sandbox import SandboxedFunction, SandboxError
+from stratarena.strategy import CodeStrategy, ParamSpace, ParamSpec, ParamStrategy, Strategy
 
 SPACE: ParamSpace = (
     ParamSpec("sort_fraction", 0.0, 1.0),
@@ -47,6 +48,37 @@ SPACE: ParamSpace = (
     ParamSpec("fillable_bonus", 0.0, 1.0),
     ParamSpec("open_penalty", 0.0, 5.0),
 )
+
+
+CODE_DESCRIPTION = """\
+Write a function `pack(items: list[int], capacity: int) -> list[int]`.
+
+- `items` are the item sizes, each between 1 and `capacity`, in arrival order.
+- Return a list with one bin number per item (same length and order as `items`); bin
+  numbers are any non-negative integers, items with the same number share a bin.
+- The total size in every bin must not exceed `capacity`.
+- Goal: use as few bins as possible. Score = reference / bins used (1.0 is optimal).
+- Standard library only (no numpy), at most 2 seconds per call, no files or network.
+- An invalid answer (wrong length, overfull bin, exception, timeout) scores 0.
+"""
+
+CODE_EXAMPLE = """\
+def pack(items, capacity):
+    \"\"\"First fit decreasing.\"\"\"
+    order = sorted(range(len(items)), key=lambda i: -items[i])
+    free = []
+    assignment = [0] * len(items)
+    for i in order:
+        for b, room in enumerate(free):
+            if room >= items[i]:
+                free[b] -= items[i]
+                assignment[i] = b
+                break
+        else:
+            free.append(capacity - items[i])
+            assignment[i] = len(free) - 1
+    return assignment
+"""
 
 
 @dataclass(frozen=True)
@@ -98,6 +130,9 @@ class BinPacking:
             "best-fit-decreasing": (1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 5.0),
         }
         return [ParamStrategy(name, values, SPACE) for name, values in presets.items()]
+
+    def code_spec(self) -> CodeSpec:
+        return CodeSpec("pack", CODE_DESCRIPTION, CODE_EXAMPLE)
 
     def generate_instance(self, seed: int) -> BinPackingInstance:
         rng = np.random.default_rng(seed)
@@ -180,8 +215,33 @@ class BinPacking:
                 bins[b].append(size)
         return bins
 
-    def evaluate(self, strategy: ParamStrategy, instance: BinPackingInstance) -> EvalResult:
-        bins = self.pack(strategy, instance)
+    def pack_with_code(
+        self, strategy: CodeStrategy, instance: BinPackingInstance
+    ) -> list[list[int]]:
+        """Run the strategy's ``pack`` in the sandbox and validate its assignment."""
+        items = list(instance.items)
+        with SandboxedFunction(strategy.source, strategy.entrypoint, strategy.limits) as fn:
+            assignment = fn(items, instance.capacity)
+        if not isinstance(assignment, list) or len(assignment) != len(items):
+            raise ValueError("pack must return one bin number per item")
+        bins: dict[int, list[int]] = {}
+        for size, b in zip(items, assignment, strict=True):
+            if not isinstance(b, int) or isinstance(b, bool) or b < 0:
+                raise ValueError(f"invalid bin number {b!r}")
+            bins.setdefault(b, []).append(size)
+        for content in bins.values():
+            if sum(content) > instance.capacity:
+                raise ValueError("a bin exceeds the capacity")
+        return [bins[b] for b in sorted(bins)]
+
+    def evaluate(self, strategy: Strategy, instance: BinPackingInstance) -> EvalResult:
+        if isinstance(strategy, CodeStrategy):
+            try:
+                bins = self.pack_with_code(strategy, instance)
+            except (SandboxError, ValueError) as e:
+                return EvalResult(score=0.0, metrics={"error": 1.0}, error=str(e))
+        else:
+            bins = self.pack(strategy, instance)
         return EvalResult(
             score=instance.reference / len(bins),
             metrics={

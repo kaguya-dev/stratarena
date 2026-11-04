@@ -10,7 +10,7 @@ from stratarena.evaluation import Evaluator
 from stratarena.problem import AnyProblem, GameProblem
 from stratarena.seeding import Stream, derive_seed, make_rng
 from stratarena.stats import mean_ci, resample_indices
-from stratarena.strategy import ParamStrategy
+from stratarena.strategy import Strategy
 
 # Bootstrap path for validation, far from any (generation, round) path used by the arena.
 _HOLDOUT_BOOTSTRAP_KEY = 2**31
@@ -69,9 +69,9 @@ class ValidationResult:
 
 def validate(
     problem: AnyProblem,
-    finalists: Sequence[ParamStrategy],
+    finalists: Sequence[Strategy],
     train_means: Mapping[str, float],
-    baselines: Sequence[ParamStrategy],
+    baselines: Sequence[Strategy],
     seed: int,
     n_instances: int,
     bootstrap_samples: int,

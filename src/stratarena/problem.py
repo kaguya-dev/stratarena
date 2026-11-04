@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
-from stratarena.strategy import ParamSpace, ParamStrategy
+from stratarena.strategy import ParamSpace, ParamStrategy, Strategy
 
 InstanceT = TypeVar("InstanceT")
 
@@ -15,6 +15,8 @@ class EvalResult:
 
     score: float
     metrics: Mapping[str, float] = field(default_factory=dict)
+    error: str | None = None
+    """Why a code strategy failed on this instance (it then scores 0)."""
 
 
 class Problem(Protocol[InstanceT]):
@@ -35,7 +37,7 @@ class Problem(Protocol[InstanceT]):
         """Build the instance identified by ``seed``."""
         ...
 
-    def evaluate(self, strategy: ParamStrategy, instance: InstanceT) -> EvalResult:
+    def evaluate(self, strategy: Strategy, instance: InstanceT) -> EvalResult:
         """Run ``strategy`` on ``instance``."""
         ...
 
@@ -55,7 +57,7 @@ class GameProblem(Protocol[InstanceT]):
 
     def generate_instance(self, seed: int) -> InstanceT: ...
 
-    def play(self, first: ParamStrategy, second: ParamStrategy, instance: InstanceT) -> float: ...
+    def play(self, first: Strategy, second: Strategy, instance: InstanceT) -> float: ...
 
 
 AnyProblem = Problem[Any] | GameProblem[Any]
@@ -66,3 +68,21 @@ class HasBaselines(Protocol):
     """Optional: a problem can provide known heuristics to compare the search against."""
 
     def baselines(self) -> list[ParamStrategy]: ...
+
+
+@dataclass(frozen=True)
+class CodeSpec:
+    """What a problem tells a code-writing agent: the function to write and an example."""
+
+    entrypoint: str
+    description: str
+    """Signature, inputs, expected output and rules, in Markdown."""
+    example: str
+    """A complete, valid reference implementation."""
+
+
+@runtime_checkable
+class HasCodeSpec(Protocol):
+    """Optional: the problem accepts ``CodeStrategy`` candidates."""
+
+    def code_spec(self) -> CodeSpec: ...

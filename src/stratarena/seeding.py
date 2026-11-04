@@ -20,6 +20,8 @@ class Stream(IntEnum):
     BOOTSTRAP = 3
     VARIATION = 4
     TRACKING = 5
+    TUNING = 6
+    SMOKE = 7
 
 
 def seed_sequence(root: int, stream: Stream, *path: int) -> np.random.SeedSequence:

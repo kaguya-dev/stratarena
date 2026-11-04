@@ -19,14 +19,18 @@ stay order). All weights are in ``[-1, 1]``:
 - ``spacing``: distance to the opponent (positive keeps away, negative chases).
 """
 
+import contextlib
 import functools
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt
 
-from stratarena.strategy import ParamSpace, ParamSpec, ParamStrategy
+from stratarena.problem import CodeSpec
+from stratarena.sandbox import SandboxedFunction, SandboxError
+from stratarena.strategy import CodeStrategy, ParamSpace, ParamSpec, ParamStrategy, Strategy
 
 SPACE: ParamSpace = (
     ParamSpec("near", -1.0, 1.0),
@@ -38,6 +42,49 @@ SPACE: ParamSpace = (
 
 # Move order also breaks ties: N, S, W, E, stay.
 _MOVES = ((-1, 0), (1, 0), (0, -1), (0, 1), (0, 0))
+
+CODE_DESCRIPTION = """\
+Write a function `choose_move(state: dict) -> int`, called once per turn.
+
+`state` has:
+- `grid`: list of strings, one per row; `#` is a wall, `.` is free.
+- `me`, `opponent`: `[row, col]` positions.
+- `coins`: list of `[row, col, value]` still on the board (value 1 or 3).
+- `turn`, `turns_left`, `my_points`, `opponent_points`: integers.
+
+Return 0 = north (row - 1), 1 = south (row + 1), 2 = west (col - 1), 3 = east (col + 1)
+or 4 = stay. Moving into a wall or off the grid means staying. Both bots move at the same
+time; if both try to enter the same cell, neither moves. Ending a move on a coin collects
+it. Most points after the last turn wins. Module-level variables persist during one game.
+Standard library only, at most 2 seconds per call; an exception, timeout or invalid move
+forfeits the game.
+"""
+
+CODE_EXAMPLE = """\
+from collections import deque
+
+MOVES = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+
+def choose_move(state):
+    \"\"\"Walk along a shortest path to the nearest coin.\"\"\"
+    grid = state["grid"]
+    start = tuple(state["me"])
+    coins = {(r, c) for r, c, _ in state["coins"]}
+    first_step = {start: None}
+    queue = deque([start])
+    while queue:
+        r, c = queue.popleft()
+        if (r, c) in coins and (r, c) != start:
+            return first_step[(r, c)]
+        for k, (dr, dc) in enumerate(MOVES):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < len(grid) and 0 <= nc < len(grid[0]) and grid[nr][nc] != "#":
+                if (nr, nc) not in first_step:
+                    first_step[(nr, nc)] = k if (r, c) == start else first_step[(r, c)]
+                    queue.append((nr, nc))
+    return 4
+"""
 
 
 @dataclass(frozen=True)
@@ -111,6 +158,9 @@ class GridBots:
         }
         return [ParamStrategy(name, values, SPACE) for name, values in presets.items()]
 
+    def code_spec(self) -> CodeSpec:
+        return CodeSpec("choose_move", CODE_DESCRIPTION, CODE_EXAMPLE)
+
     def generate_instance(self, seed: int) -> GridInstance:
         rng = np.random.default_rng(seed)
         h = w = self.size
@@ -149,29 +199,101 @@ class GridBots:
                     queue.append(nxt)
         return seen
 
-    def play(self, first: ParamStrategy, second: ParamStrategy, instance: GridInstance) -> float:
+    def play(self, first: Strategy, second: Strategy, instance: GridInstance) -> float:
         dist, moves = _geometry(instance)
         scale = float(instance.height + instance.width)
-        weights = (np.asarray(first.values), np.asarray(second.values))
+        w = instance.width
+        rows = [
+            "".join("#" if instance.walls[r * w + c] else "." for c in range(w))
+            for r in range(instance.height)
+        ]
         pos = list(instance.starts)
         coins = dict(instance.coins)
         points = [0, 0]
-        for _ in range(instance.turns):
-            if not coins:
-                break
-            cells = np.fromiter(coins, dtype=np.int64)
-            values = np.fromiter(coins.values(), dtype=float)
-            targets = [
-                self._choose(weights[i], pos[i], pos[1 - i], cells, values, dist, moves, scale)
-                for i in (0, 1)
-            ]
-            if targets[0] != targets[1]:
-                pos = targets
-            for i in (0, 1):
-                points[i] += coins.pop(pos[i], 0)
+
+        with contextlib.ExitStack() as stack:
+            deciders: list[Callable[[int, int, int, int], int]] = []
+            for i, strategy in enumerate((first, second)):
+                if isinstance(strategy, CodeStrategy):
+                    try:
+                        fn = stack.enter_context(
+                            SandboxedFunction(strategy.source, strategy.entrypoint, strategy.limits)
+                        )
+                    except SandboxError:
+                        return self._forfeit(i)
+                    deciders.append(
+                        self._code_decider(fn, i, rows, w, moves, lambda: coins, points)
+                    )
+                else:
+                    weights = np.asarray(strategy.values)
+                    deciders.append(self._param_decider(weights, dist, moves, scale, lambda: coins))
+
+            for t in range(instance.turns):
+                if not coins:
+                    break
+                targets = []
+                for i in (0, 1):
+                    try:
+                        targets.append(deciders[i](pos[i], pos[1 - i], t, instance.turns - t))
+                    except (SandboxError, ValueError):
+                        return self._forfeit(i)
+                if targets[0] != targets[1]:
+                    pos = targets
+                for i in (0, 1):
+                    points[i] += coins.pop(pos[i], 0)
         if points[0] == points[1]:
             return 0.5
         return 1.0 if points[0] > points[1] else 0.0
+
+    @staticmethod
+    def _forfeit(player: int) -> float:
+        """Result for the first player when ``player`` broke the rules."""
+        return 0.0 if player == 0 else 1.0
+
+    def _param_decider(
+        self,
+        weights: npt.NDArray[np.float64],
+        dist: npt.NDArray[np.float64],
+        moves: npt.NDArray[np.int64],
+        scale: float,
+        coins: Callable[[], dict[int, int]],
+    ) -> Callable[[int, int, int, int], int]:
+        def decide(me: int, opp: int, turn: int, turns_left: int) -> int:
+            board = coins()
+            cells = np.fromiter(board, dtype=np.int64)
+            values = np.fromiter(board.values(), dtype=float)
+            return self._choose(weights, me, opp, cells, values, dist, moves, scale)
+
+        return decide
+
+    @staticmethod
+    def _code_decider(
+        fn: SandboxedFunction,
+        player: int,
+        rows: list[str],
+        width: int,
+        moves: npt.NDArray[np.int64],
+        coins: Callable[[], dict[int, int]],
+        points: list[int],
+    ) -> Callable[[int, int, int, int], int]:
+        def decide(me: int, opp: int, turn: int, turns_left: int) -> int:
+            board = coins()
+            state = {
+                "grid": rows,
+                "me": list(divmod(me, width)),
+                "opponent": list(divmod(opp, width)),
+                "coins": [[*divmod(c, width), v] for c, v in sorted(board.items())],
+                "turn": turn,
+                "turns_left": turns_left,
+                "my_points": points[player],
+                "opponent_points": points[1 - player],
+            }
+            move = fn(state)
+            if not isinstance(move, int) or isinstance(move, bool) or not 0 <= move < 5:
+                raise ValueError(f"invalid move {move!r}")
+            return int(moves[me, move])
+
+        return decide
 
     @staticmethod
     def _choose(

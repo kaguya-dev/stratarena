@@ -13,7 +13,7 @@ from stratarena.problem import AnyProblem, GameProblem
 from stratarena.rating import PairStats
 from stratarena.seeding import Stream, derive_seed, make_rng
 from stratarena.stats import mean_ci, resample_indices
-from stratarena.strategy import ParamStrategy
+from stratarena.strategy import Strategy
 
 log = get_logger(__name__)
 
@@ -41,7 +41,7 @@ class RoundRecord:
 class ArenaResult:
     generation: int
     rounds: tuple[RoundRecord, ...]
-    finalists: tuple[ParamStrategy, ...]
+    finalists: tuple[Strategy, ...]
     standings: tuple[Standing, ...]
     scores: dict[str, tuple[float, ...]]
     ratings: dict[str, float]
@@ -84,7 +84,7 @@ class Arena:
 
     def run(
         self,
-        candidates: Sequence[ParamStrategy],
+        candidates: Sequence[Strategy],
         generation: int = 0,
         evaluator: Evaluator | None = None,
     ) -> ArenaResult:
@@ -99,7 +99,7 @@ class Arena:
         return self._run(candidates, generation, evaluator)
 
     def _run(
-        self, candidates: Sequence[ParamStrategy], generation: int, evaluator: Evaluator
+        self, candidates: Sequence[Strategy], generation: int, evaluator: Evaluator
     ) -> ArenaResult:
         cfg = self.config
         survivors = list(candidates)

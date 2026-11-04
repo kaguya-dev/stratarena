@@ -4,7 +4,7 @@ Choose strategies by simulation. stratarena generates candidate strategies for a
 puts them through battle-royale arenas on fresh random instances, eliminates the weakest,
 hybridizes the best and validates the winners on held-out instances.
 
-> Status: early development (milestone 3 of 5). The full README, with architecture,
+> Status: early development (milestone 4 of 5). The full README, with architecture,
 > results and roadmap, comes with the later milestones.
 
 ## Quick start
