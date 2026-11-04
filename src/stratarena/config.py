@@ -48,7 +48,7 @@ class LLMConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    provider: Literal["none", "ollama", "anthropic"] = "none"
+    provider: Literal["none", "ollama", "anthropic", "external"] = "none"
     model: str | None = None
     """Defaults: ``llama3.2`` for Ollama, ``claude-opus-5-5`` for Anthropic."""
     host: str | None = None
@@ -59,6 +59,8 @@ class LLMConfig(BaseModel):
     """Ollama only."""
     effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     """Anthropic only."""
+    queue_dir: str = ".stratarena-queue"
+    """External provider only: where unanswered prompts and their answers go."""
     cache_dir: str = ".stratarena-cache/llm"
     """Every answer is stored here, keyed by a hash of the request, so runs replay."""
 

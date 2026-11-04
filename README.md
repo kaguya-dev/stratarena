@@ -159,7 +159,8 @@ baselines. Score = optimum (or lower bound) / bins used.
 | Triplets (known optimum) | 7 | 0.9411 | best-fit 0.8948 | −0.0463 [−0.0530, −0.0395] |
 | Triplets | 42 | 0.9233 | best-fit 0.8940 | −0.0292 [−0.0354, −0.0236] |
 | Triplets | 123 | 0.9479 | best-fit 0.8920 | −0.0559 [−0.0604, −0.0512] |
-| Triplets, with agents (local LLM) | 42 | **0.9436** | best-fit 0.8940 | −0.0496 [−0.0539, −0.0445] |
+| Triplets, agents with a local 8B LLM | 42 | 0.9436 | best-fit 0.8940 | −0.0496 [−0.0539, −0.0445] |
+| Triplets, agents with Claude Opus | 42 | **1.0000** | best-fit 0.8940 | −0.1060 [−0.1083, −0.1036] |
 | Mix of 4 profiles | 7 | 0.9118 | best-fit-decreasing 0.9118 | +0.0000 [+0.0000, +0.0000] |
 | Mix of 4 profiles | 42 | 0.9255 | best-fit-decreasing 0.9257 | +0.0002 [−0.0005, +0.0010] |
 | Mix of 4 profiles | 123 | 0.9190 | best-fit-decreasing 0.9202 | +0.0012 [+0.0003, +0.0023] |
@@ -170,15 +171,25 @@ baselines. Score = optimum (or lower bound) / bins used.
 - On the **mix of profiles**, it **does not** beat best-fit decreasing: it ties in two seeds and
   is slightly but significantly worse in one. The gains on triplets are cancelled out where
   the classic heuristics are already near-optimal.
-- With **agents** (seed 42, `gemma4:e4b` via Ollama), the champion reached 0.9436 against
-  0.9233 for the same seed without agents. The gain came from the **parameter tuner**, which
-  uses no LLM: 7 of 8 code candidates from the LLM were admitted, two of them scoring above
-  first-fit decreasing on the smoke test, and 1 of 4 fusions was admitted, but none reached
-  the finalists.
+- **Agents, local model** (`gemma4:e4b`, 8B, via Ollama): the champion reached 0.9436, against
+  0.9233 for the same seed without agents, but the gain came from the **parameter tuner**,
+  which uses no LLM. The LLM's code was admitted (7 of 8 candidates, 1 of 4 fusions) but
+  mostly reimplemented best-fit decreasing and never reached the finalists.
+- **Agents, Claude Opus** (same configuration and prompts; each prompt answered by a fresh
+  Claude Code subagent that saw only the prompt and could not run code): all 12 code
+  candidates passed the checks on the first attempt. In generation 1 the LLM's code took the
+  lead (0.977 on the tracking set); in generation 2 an **LLM fusion of two finalists**
+  (`g2-fx00`) packed every held-out instance optimally. It combines constructions known from
+  the literature (minimum bin slack) with a bin-elimination local search, so the model likely
+  drew on published methods rather than inventing new ones.
+- **Independent check** of that champion with [`scripts/check_champion.py`](scripts/check_champion.py)
+  on 210 instances no search ever used: optimal on all 150 triplet instances; on the three other
+  profiles, which it was never trained on, 0.947 against 0.940 for best-fit decreasing,
+  better on 21 of 60 instances and worse on none.
 
-| Triplets, seed 42 | Triplets with agents, seed 42 |
-|---|---|
-| ![Bin packing triplets](docs/images/binpacking-triplets-seed42.png) | ![Bin packing with agents](docs/images/binpacking-agents-seed42.png) |
+| Triplets, no agents | Agents, local 8B model | Agents, Claude Opus |
+|---|---|---|
+| ![Bin packing triplets](docs/images/binpacking-triplets-seed42.png) | ![Bin packing with a local LLM](docs/images/binpacking-agents-seed42.png) | ![Bin packing with Claude](docs/images/binpacking-subagent-seed42.png) |
 
 The charts show each generation's champion on a **fixed tracking set** that never influences
 selection (arena instances change every round, so training means are not comparable across
@@ -231,11 +242,15 @@ agents:
 - **Anthropic**: `uv sync --extra anthropic` and credentials in the environment
   (`ANTHROPIC_API_KEY`); defaults to `claude-opus-5-5` with server-side refusal fallbacks.
   No key is ever stored in the repository.
+- **external**: unanswered prompts go to a queue directory and the run stops; once someone
+  (a person, or a separate agent session) writes the answers, the same command replays
+  everything and continues. The Claude Opus results above were produced this way
+  ([`configs/binpacking-agents-subagent.yaml`](configs/binpacking-agents-subagent.yaml)).
 - **none**: only the tuner runs, which is how the tests run.
 
-Every LLM request and answer is cached under `.stratarena-cache/llm/`, keyed by a hash of
-the request, and saved with the run in `agents/llm_exchanges.jsonl`. Rerunning the same
-configuration replays the answers and reproduces the run exactly.
+Every LLM request and answer is cached, keyed by a hash of the request, and saved with the
+run in `agents/llm_exchanges.jsonl`. The answers of both agent experiments are versioned in
+[`results/llm-cache/`](results/llm-cache), so they replay without any model, key or network.
 
 ## Adding a problem
 
@@ -262,12 +277,20 @@ Problems must be picklable and deterministic; higher scores are always better.
   memory, file-size and process limits and only the standard library, which contains
   accidents and keeps it away from the simulator. It can still use the network and read the
   user's files. It needs a POSIX system and has only been tested on Linux.
-- **The small local model did not write better code.** With `gemma4:e4b`, LLM candidates
-  mostly reimplemented best-fit decreasing; the critic sometimes gave wrong advice; fusions
-  often failed the checks. A larger model may do better; this was not measured.
+- **The value of the agents depends on the model.** The 8B local model's code never beat the
+  parameter search; Claude Opus's code solved the triplets benchmark. Each was measured on one
+  seed. The Claude answers came from Claude Code subagents, not the API; in the first three
+  batches one subagent answered all three prompts of the batch, later batches used one
+  subagent per prompt.
+- **Triplets is a classic benchmark**, and the winning code uses methods from the literature;
+  the result shows the framework admitting and validating strong code, not a new algorithm.
 - **LLM sampling is not reproducible**; runs are reproducible only by replaying the cache.
+- **Time-limited code depends on the CPU.** The LLM's strategies stop after about 1.4 s, so
+  their results depend on machine speed and load: a replay on an idle machine was
+  byte-identical, while a replay next to another heavy job diverged in generation 3.
 - **Selection is noisy.** In bin packing triplets seed 42, the generation-2 champion scored
-  0.927 on the tracking set and was then displaced by a candidate scoring 0.921. More instances per round reduce this at a proportional cost.
+  0.927 on the tracking set and was then displaced by a candidate scoring 0.921. More
+  instances per round reduce this at a proportional cost.
 - **Bin packing scores on non-triplet profiles use a weak lower bound**, so a score below 1.0
   there does not mean a better packing exists.
 - **Game results are noisy and depend on the opponents.** Training and held-out scores in
@@ -283,15 +306,16 @@ Problems must be picklable and deterministic; higher scores are always better.
 This project was built with AI assistance. **Built with Claude Code**: the code, tests,
 configurations and documentation were written by Claude Code (Claude Opus 5.5) under the
 author's direction, milestone by milestone, with the author approving the plan and each
-milestone and choosing what to adjust. The experiments' agents ran on a local model,
-`gemma4:e4b`, served by Ollama.
+milestone and choosing what to adjust. In the experiments, the framework's own agents ran on
+a local model (`gemma4:e4b` via Ollama) and on Claude Opus through Claude Code subagents.
 
 ## Roadmap
 
 - A stronger sandbox (Linux namespaces or seccomp, no network).
 - A hall of fame of past champions as sparring partners, beyond the baselines.
 - More example problems (scheduling, routing) and a CMA-ES tuner.
-- Compare LLMs of different sizes on code generation and fusion, with cost and latency.
+- Deterministic budgets for code strategies (operation counts instead of wall-clock time).
+- Compare more LLMs on code generation and fusion over several seeds, with cost and latency.
 - Adaptive rounds that stop early when the confidence intervals separate.
 - A release on PyPI.
 
@@ -302,7 +326,7 @@ uv sync --all-extras
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src tests
 uv run pytest --cov
-scripts/reproduce_results.sh           # WITH_OLLAMA=1 also runs the agents experiment
+scripts/reproduce_results.sh           # every result above, on an idle machine
 ```
 
 CI runs lint, type checks and the tests on every push.
@@ -318,15 +342,19 @@ ficam em cache para reproduzir a execução.
 
 - **Bin packing (triplets):** a busca supera todas as heurísticas clássicas por 3 a 6 pontos
   em 3 seeds. Na mistura de perfis, empata com o best-fit decreasing e não o supera.
-- **Agentes com LLM local (`gemma4:e4b`):** o ganho veio do otimizador de parâmetros, sem LLM;
-  nenhum código do LLM chegou às finalistas.
+- **Agentes com LLM:** com um modelo local de 8B (`gemma4:e4b`), o ganho veio do otimizador de
+  parâmetros e nenhum código do LLM chegou às finalistas. Com o Claude Opus, o código escrito
+  e fundido pelo LLM resolveu o benchmark triplets de forma ótima no held-out (1,000 contra
+  0,894 do melhor baseline) e também superou o best-fit decreasing em perfis que nunca viu.
 - **Grid Bots:** com sparring, a média da campeã sobe de 0,543 para 0,599 em 4 seeds, sem
   vitória significativa sobre o melhor baseline.
 - **Limitações:** o sandbox não é barreira de segurança; resultados de jogo são ruidosos;
-  amostragem do LLM só é reproduzível pelo cache.
+  amostragem do LLM só é reproduzível pelo cache; estratégias com limite de tempo dependem da
+  carga da CPU; triplets é um benchmark clássico e o código vencedor usa métodos conhecidos.
 
 Desenvolvido com assistência de IA: **Built with Claude Code** (Claude Opus 5.5), sob a
-direção do autor; os agentes dos experimentos usaram `gemma4:e4b` via Ollama.
+direção do autor; os agentes dos experimentos usaram `gemma4:e4b` via Ollama e o Claude Opus
+via subagentes do Claude Code.
 
 ## License
 

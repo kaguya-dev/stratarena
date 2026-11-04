@@ -11,3 +11,4 @@ dist/
 runs/
 .stratarena-cache/
 results/runs/
+.stratarena-queue/

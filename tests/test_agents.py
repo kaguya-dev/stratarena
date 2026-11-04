@@ -195,3 +195,46 @@ def test_fusion_merges_two_parents(ctx: AgentContext) -> None:
     assert [e.action for e in proposal.events] == ["rejected", "accepted"]
     prompt = llm.calls[0][1]
     assert a.id in prompt and "code-parent" in prompt and "combines the strengths" in prompt
+
+
+def test_cli_stops_with_pending_prompts_and_resumes(tmp_path: Path) -> None:
+    import yaml
+    from typer.testing import CliRunner
+
+    from stratarena.cli import app
+
+    queue, cache = tmp_path / "queue", tmp_path / "cache"
+    cfg = {
+        "seed": 1,
+        "problem": "binpacking",
+        "problem_options": {"n_items": 30},
+        "population": 6,
+        "generations": 2,
+        "holdout_instances": 4,
+        "tracking_instances": 2,
+        "arena": {"instances_per_round": 2, "finalists": 2, "bootstrap_samples": 100},
+        "hybrid": {"immigrants": 1},
+        "agents": {
+            "enabled": True,
+            "code_candidates": 1,
+            "fusion_candidates": 0,
+            "critic": False,
+            "tuner_candidates": 0,
+            "llm": {
+                "provider": "external",
+                "model": "tester",
+                "queue_dir": str(queue),
+                "cache_dir": str(cache),
+            },
+        },
+    }
+    path = tmp_path / "c.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+    args = ["run", "--config", str(path), "--out", str(tmp_path / "runs"), "--quiet"]
+    first = CliRunner().invoke(app, args)
+    assert first.exit_code == 3 and "pending" in first.output
+    (pending,) = sorted(queue.glob("*.json"))
+    (queue / "answers" / f"{pending.stem}.txt").write_text(GOOD)
+    second = CliRunner().invoke(app, args)
+    assert second.exit_code == 0, second.output
+    assert "champion" in second.output

@@ -1,0 +1,44 @@
+# Same experiment as binpacking-agents.yaml, answered by Claude Code subagents instead of
+# an API: unanswered prompts go to .stratarena-queue/ and the run stops; each batch is
+# answered by a fresh subagent that sees only the prompt text, then the run is repeated
+# (earlier answers replay from the cache).
+seed: 42
+problem: binpacking
+problem_options:
+  n_items: 120
+  capacity: 100
+  profiles: [triplets]
+population: 16
+generations: 5
+holdout_instances: 100
+tracking_instances: 30
+arena:
+  instances_per_round: 8
+  elimination_fraction: 0.3
+  finalists: 4
+  max_rounds: 10
+  workers: 4
+  bootstrap_samples: 1000
+hybrid:
+  crossover_alpha: 0.3
+  mutation_rate: 0.3
+  mutation_scale: 0.1
+  immigrants: 2
+agents:
+  enabled: true
+  code_candidates: 2
+  max_attempts: 2
+  critic: true
+  tuner_candidates: 2
+  tuner_iterations: 10
+  tuner_instances: 6
+  smoke_instances: 2
+  max_parallel: 4
+  llm:
+    provider: external
+    model: claude-opus-subagent
+    cache_dir: results/llm-cache  # versioned, so the run replays without any LLM
+  sandbox:
+    call_timeout_s: 2.0
+    cpu_seconds: 30
+    memory_mb: 256

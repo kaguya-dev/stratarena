@@ -116,3 +116,26 @@ def test_anthropic_missing_credentials_is_an_llm_error() -> None:
     client = SimpleNamespace(beta=SimpleNamespace(messages=NoAuth()))
     with pytest.raises(LLMError, match="no credentials"):
         AnthropicLLM(client=client).complete("s", "p")
+
+
+def test_external_llm_queues_prompts_and_replays_answers(tmp_path: Path) -> None:
+    from stratarena.llm import AnswerPending, ExternalLLM
+
+    queue = tmp_path / "queue"
+    llm = CachedLLM(ExternalLLM("someone", queue), tmp_path / "cache")
+    with pytest.raises(AnswerPending):
+        llm.complete("sys", "prompt")
+    (pending,) = ExternalLLM("someone", queue).pending()
+    request = json.loads(pending.read_text())
+    assert request["prompt"] == "prompt" and request["llm"] == "external/someone"
+    (queue / "answers" / f"{request['key']}.txt").write_text("the answer")
+    assert ExternalLLM("someone", queue).pending() == []
+    assert llm.complete("sys", "prompt") == "the answer"
+    assert llm.exchanges[-1].cached is False
+    replay = CachedLLM(ExternalLLM("someone", tmp_path / "other"), tmp_path / "cache")
+    assert replay.complete("sys", "prompt") == "the answer"
+
+
+def test_make_external_llm_needs_a_model(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        make_llm(LLMConfig(provider="external", queue_dir=str(tmp_path)))

@@ -38,6 +38,7 @@ agents:
     model: gemma4:e4b
     temperature: 0.2
     seed: 0
+    cache_dir: results/llm-cache  # versioned, so the run replays without any LLM
   sandbox:
     call_timeout_s: 2.0
     cpu_seconds: 30

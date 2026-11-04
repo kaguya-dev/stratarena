@@ -9,6 +9,7 @@ import typer
 
 from stratarena.config import RunConfig, load_config
 from stratarena.examples import PROBLEMS, make_problem
+from stratarena.llm import AnswerPending
 from stratarena.log import configure_logging
 from stratarena.report import (
     REPORT_MD,
@@ -72,7 +73,17 @@ def run(
             "Anthropic CLI profile provides credentials",
             err=True,
         )
-    result = run_search(make_problem(cfg.problem, cfg.problem_options), cfg)
+    try:
+        result = run_search(make_problem(cfg.problem, cfg.problem_options), cfg)
+    except AnswerPending as e:
+        waiting = sorted(e.queue.glob("*.json"))
+        answered = {p.stem for p in (e.queue / "answers").glob("*.txt")}
+        n = sum(p.stem not in answered for p in waiting)
+        typer.echo(
+            f"pending    {n} prompt(s) in {e.queue}: write each answer to "
+            f"{e.queue / 'answers'}/<key>.txt, then rerun the same command"
+        )
+        raise typer.Exit(3) from None
     run_dir = write_run(result, out / run_name(result))
 
     v = result.validation
@@ -86,9 +97,12 @@ def run(
         f"held-out   {champ.holdout.mean:.4f} [{champ.holdout.ci_low:.4f}, "
         f"{champ.holdout.ci_high:.4f}]  gap {v.generalization_gap:+.4f}"
     )
-    for e in v.entries:
-        if e.kind == "baseline":
-            typer.echo(f"baseline   {e.strategy_id:<22} {e.holdout.mean:.4f}  Δ {e.diff_mean:+.4f}")
+    for entry in v.entries:
+        if entry.kind == "baseline":
+            typer.echo(
+                f"baseline   {entry.strategy_id:<22} {entry.holdout.mean:.4f}  "
+                f"Δ {entry.diff_mean:+.4f}"
+            )
     typer.echo(f"report     {run_dir / REPORT_MD}")
 
 

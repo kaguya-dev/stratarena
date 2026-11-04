@@ -4,6 +4,9 @@
 - ``AnthropicLLM``: Claude through the official ``anthropic`` SDK (optional extra
   ``stratarena[anthropic]``; credentials from the environment, e.g. ``ANTHROPIC_API_KEY``).
 - ``ScriptedLLM``: canned answers, for tests and for running without any model.
+- ``ExternalLLM``: answers written by someone else (a person, or a separate agent session):
+  unanswered prompts go to a queue directory and the run stops; once the answers are
+  in place, rerunning replays everything from the cache and continues.
 - ``CachedLLM``: wraps any of them and stores every answer on disk, keyed by a hash of the
   request, so a run can be replayed exactly (LLM sampling is otherwise not reproducible).
 
@@ -149,6 +152,46 @@ class AnthropicLLM:
         return text
 
 
+class AnswerPending(Exception):  # noqa: N818 - a signal, not an error
+    """Raised by ``ExternalLLM`` when a prompt has no answer yet. Stops the run."""
+
+    def __init__(self, queue: Path) -> None:
+        super().__init__(f"prompts are waiting for answers in {queue}")
+        self.queue = queue
+
+
+class ExternalLLM:
+    """Answers come from files: ``<queue>/answers/<key>.txt`` for ``<queue>/<key>.json``.
+
+    The key is the same request hash as the cache, so a prompt is written once and its
+    answer is used once; afterwards ``CachedLLM`` replays it.
+    """
+
+    def __init__(self, model: str, queue_dir: Path) -> None:
+        self.name = f"external/{model}"
+        self.queue = queue_dir
+        (self.queue / "answers").mkdir(parents=True, exist_ok=True)
+
+    def complete(self, system: str, prompt: str) -> str:
+        key = request_key(self.name, system, prompt)
+        answer = self.queue / "answers" / f"{key}.txt"
+        if answer.exists():
+            return answer.read_text(encoding="utf-8")
+        request = {"key": key, "llm": self.name, "system": system, "prompt": prompt}
+        (self.queue / f"{key}.json").write_text(
+            json.dumps(request, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
+        raise AnswerPending(self.queue)
+
+    def pending(self) -> list[Path]:
+        """Queued prompts that still have no answer."""
+        return sorted(
+            p
+            for p in self.queue.glob("*.json")
+            if not (self.queue / "answers" / f"{p.stem}.txt").exists()
+        )
+
+
 class ScriptedLLM:
     """Returns canned answers: a list consumed in order, or a function of the request."""
 
@@ -209,7 +252,11 @@ def make_llm(config: LLMConfig) -> CachedLLM | None:
     inner: LLM
     if config.provider == "none":
         return None
-    if config.provider == "ollama":
+    if config.provider == "external":
+        if not config.model:
+            raise ValueError("the external provider needs a model name")
+        inner = ExternalLLM(config.model, Path(config.queue_dir))
+    elif config.provider == "ollama":
         inner = OllamaLLM(
             model=config.model or "llama3.2",
             host=config.host,
