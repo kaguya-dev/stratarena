@@ -5,8 +5,8 @@ from stratarena.examples.binpacking import SPACE
 from stratarena.hybridizer import ParamHybridizer
 from stratarena.strategy import ParamStrategy
 
-A = ParamStrategy("a", (0.0, -1.0, 0.0), SPACE)
-B = ParamStrategy("b", (1.0, 1.0, 1.0), SPACE)
+A = ParamStrategy("a", (0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0), SPACE)
+B = ParamStrategy("b", (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 5.0), SPACE)
 
 
 def test_children_are_valid_and_record_parents() -> None:

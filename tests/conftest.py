@@ -13,7 +13,15 @@ def make(id: str, sort_fraction: float, fit_weight: float, first_weight: float) 
     return ParamStrategy.from_mapping(
         id,
         SPACE,
-        {"sort_fraction": sort_fraction, "fit_weight": fit_weight, "first_weight": first_weight},
+        {
+            "sort_fraction": sort_fraction,
+            "fit_weight": fit_weight,
+            "first_weight": first_weight,
+            "exact_bonus": 0.0,
+            "waste_penalty": 0.0,
+            "fillable_bonus": 0.0,
+            "open_penalty": 5.0,
+        },
     )
 
 

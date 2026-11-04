@@ -52,3 +52,53 @@ def test_registry() -> None:
 def test_invalid_options() -> None:
     with pytest.raises(ValueError):
         BinPacking(n_items=0)
+
+
+def test_baselines_ignore_lookahead_features(problem: BinPacking) -> None:
+    names = {b.id for b in problem.baselines()}
+    assert names == {"first-fit", "best-fit", "first-fit-decreasing", "best-fit-decreasing"}
+    for b in problem.baselines():
+        assert b["exact_bonus"] == b["waste_penalty"] == b["fillable_bonus"] == 0.0
+        assert b["open_penalty"] == 5.0
+
+
+def test_triplets_have_a_known_perfect_packing(problem: BinPacking) -> None:
+    triplets = [
+        i for i in (problem.generate_instance(s) for s in range(40)) if i.optimum is not None
+    ]
+    assert triplets
+    for inst in triplets:
+        assert inst.optimum is not None
+        assert len(inst.items) == 3 * inst.optimum
+        assert sum(inst.items) == inst.optimum * inst.capacity
+        assert inst.reference == inst.optimum == inst.lower_bound
+
+
+def test_opening_bins_on_purpose_beats_ffd_on_triplets(
+    problem: BinPacking, ffd: ParamStrategy
+) -> None:
+    triplets = [
+        i for i in (problem.generate_instance(s) for s in range(80)) if i.optimum is not None
+    ]
+    smart = ParamStrategy("smart", (0.07, 0.37, 0.8, 0.64, 0.34, 0.56, 0.11), problem.param_space())
+    ffd_score = sum(problem.evaluate(ffd, i).score for i in triplets)
+    smart_score = sum(problem.evaluate(smart, i).score for i in triplets)
+    assert smart_score > ffd_score
+
+
+def test_lookahead_strategy_packs_validly(problem: BinPacking) -> None:
+    s = ParamStrategy("look", (1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.5), problem.param_space())
+    for seed in range(10):
+        inst = problem.generate_instance(seed)
+        bins = problem.pack(s, inst)
+        assert all(sum(b) <= inst.capacity for b in bins)
+        assert Counter(x for b in bins for x in b) == Counter(inst.items)
+
+
+def test_profiles_can_be_restricted() -> None:
+    p = BinPacking(n_items=30, profiles=["triplets"])
+    assert all(p.generate_instance(s).optimum == 10 for s in range(10))
+    with pytest.raises(ValueError, match="profiles"):
+        BinPacking(profiles=["nope"])
+    with pytest.raises(ValueError, match="profiles"):
+        BinPacking(profiles=[])
