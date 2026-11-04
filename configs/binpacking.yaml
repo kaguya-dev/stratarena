@@ -1,0 +1,13 @@
+seed: 42
+problem: binpacking
+problem_options:
+  n_items: 120
+  capacity: 100
+population: 16
+arena:
+  instances_per_round: 8
+  elimination_fraction: 0.3
+  finalists: 4
+  max_rounds: 10
+  workers: 4
+  bootstrap_samples: 1000
