@@ -173,7 +173,8 @@ baselines. Score = optimum (or lower bound) / bins used.
   the classic heuristics are already near-optimal.
 - **Agents, local model** (`gemma4:e4b`, 8B, via Ollama): the champion reached 0.9436, against
   0.9233 for the same seed without agents, but the gain came from the **parameter tuner**,
-  which uses no LLM. The LLM's code was admitted (7 of 8 candidates, 1 of 4 fusions) but
+  which uses no LLM. The LLM's code was admitted (8 of 8 candidates, 3 after a retry; 1 of 4
+  fusions) but
   mostly reimplemented best-fit decreasing and never reached the finalists.
 - **Agents, Claude Opus** (same configuration and prompts; each prompt answered by a fresh
   Claude Code subagent that saw only the prompt and could not run code): all 12 code
