@@ -58,6 +58,7 @@ def test_generator_accepts_valid_code(ctx: AgentContext) -> None:
     assert [e.action for e in proposal.events] == ["accepted"]
     prompt = llm.calls[0][1]
     assert "pack(items: list[int], capacity: int)" in prompt
+    assert "How to read the parametric heuristics" in prompt and "open_penalty" in prompt
     assert ctx.finalists[0].id in prompt
 
 

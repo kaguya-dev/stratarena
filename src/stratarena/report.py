@@ -286,7 +286,13 @@ def render_markdown(data: dict[str, Any]) -> str:
             f"| {d['mean']:+.4f} [{d['low']:+.4f}, {d['high']:+.4f}] |"
             + (f" {_elo(e['rating'])} |" if game else "")
         )
-    if game:
+    if game and cfg.get("sparring"):
+        verdict = (
+            "In a game the training and held-out scores are measured against different "
+            "fields, so this gap is not an overfitting measure. The baselines were sparring "
+            "partners during training, so on the held-out maps they are known opponents."
+        )
+    elif game:
         verdict = (
             "In a game the training and held-out scores are measured against different "
             "fields (the other survivors vs. finalists plus baselines), so this gap is not an "

@@ -79,6 +79,9 @@ class CodeSpec:
     """Signature, inputs, expected output and rules, in Markdown."""
     example: str
     """A complete, valid reference implementation."""
+    param_guide: str = ""
+    """How the parametric strategies work, so an agent can turn a strong parameter vector
+    into an idea for code."""
 
 
 @runtime_checkable

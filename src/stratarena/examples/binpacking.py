@@ -81,6 +81,24 @@ def pack(items, capacity):
 """
 
 
+PARAM_GUIDE = """\
+A parametric heuristic first places the largest `round(sort_fraction * n)` items in
+decreasing size, then the rest in arrival order. For each item it scores every bin the
+item fits in, plus the option of opening a new bin, and takes the highest score:
+
+    score = -fit_weight * space_left_after / capacity
+            - first_weight * (bin_index / number_of_open_bins)    # new bin counts as 1.0
+            + exact_bonus     if space_left_after == 0
+            - waste_penalty   if 0 < space_left_after < smallest item still to place
+            + fillable_bonus  if space_left_after equals the size of an item still to place
+            - open_penalty    for the "open a new bin" option only
+
+`open_penalty` near 5 means a new bin is opened only when nothing fits (classic first or
+best fit). A low `open_penalty` means the heuristic deliberately refuses bad fits and
+opens a new bin instead, which pays off when items must be grouped in exact triples.
+"""
+
+
 @dataclass(frozen=True)
 class BinPackingInstance:
     capacity: int
@@ -132,7 +150,7 @@ class BinPacking:
         return [ParamStrategy(name, values, SPACE) for name, values in presets.items()]
 
     def code_spec(self) -> CodeSpec:
-        return CodeSpec("pack", CODE_DESCRIPTION, CODE_EXAMPLE)
+        return CodeSpec("pack", CODE_DESCRIPTION, CODE_EXAMPLE, PARAM_GUIDE)
 
     def generate_instance(self, seed: int) -> BinPackingInstance:
         rng = np.random.default_rng(seed)

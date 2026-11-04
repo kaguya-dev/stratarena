@@ -99,9 +99,19 @@ class RunConfig(BaseModel):
     holdout_instances: int = Field(default=50, ge=2)
     tracking_instances: int = Field(default=30, ge=1)
     baselines_compete: bool = False
+    sparring: bool = False
+    """Games only: the baselines play in every arena round robin as fixed opponents that
+    are never ranked or eliminated. They then also stop being unseen opponents in the
+    held-out validation (the maps still are unseen)."""
     arena: ArenaConfig = Field(default_factory=ArenaConfig)
     hybrid: HybridConfig = Field(default_factory=HybridConfig)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
+
+    @model_validator(mode="after")
+    def _sparring_or_compete(self) -> Self:
+        if self.sparring and self.baselines_compete:
+            raise ValueError("baselines can either compete or spar, not both")
+        return self
 
     @model_validator(mode="after")
     def _room_for_offspring(self) -> Self:

@@ -68,7 +68,8 @@ def run_search(problem: AnyProblem, config: RunConfig, llm: LLM | None = None) -
     """
     baselines = problem.baselines() if isinstance(problem, HasBaselines) else []
     is_game = isinstance(problem, GameProblem)
-    arena = Arena(problem, config.arena, config.seed)
+    sparring = baselines if config.sparring and is_game else []
+    arena = Arena(problem, config.arena, config.seed, sparring=sparring)
     hybridizer = ParamHybridizer(config.hybrid, config.seed)
     if llm is None and config.agents.enabled:
         llm = make_llm(config.agents.llm)

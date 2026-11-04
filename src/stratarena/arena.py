@@ -77,10 +77,24 @@ class Arena:
     ratings of the finalists are reported alongside.
     """
 
-    def __init__(self, problem: AnyProblem, config: ArenaConfig, seed: int) -> None:
+    def __init__(
+        self,
+        problem: AnyProblem,
+        config: ArenaConfig,
+        seed: int,
+        sparring: Sequence[Strategy] = (),
+    ) -> None:
+        """``sparring``: fixed opponents (games only) that join every round robin.
+
+        They are played against but never ranked or eliminated, so the population cannot
+        drift into only beating itself.
+        """
+        if sparring and not isinstance(problem, GameProblem):
+            raise ValueError("sparring partners only make sense for game problems")
         self.problem = problem
         self.config = config
         self.seed = seed
+        self.sparring = list(sparring)
 
     def run(
         self,
@@ -93,6 +107,8 @@ class Arena:
             raise ValueError("the arena needs at least one candidate")
         if len(set(ids)) != len(ids):
             raise ValueError("candidate ids must be unique")
+        if set(ids) & {s.id for s in self.sparring}:
+            raise ValueError("a candidate has the same id as a sparring partner")
         if evaluator is None:
             with Evaluator(self.config.workers) as own:
                 return self._run(candidates, generation, own)
@@ -113,10 +129,10 @@ class Arena:
                 derive_seed(self.seed, Stream.TRAIN, generation, r, i)
                 for i in range(cfg.instances_per_round)
             )
-            evaluation = evaluator.evaluate(self.problem, survivors, seeds)
+            evaluation = evaluator.evaluate(self.problem, [*survivors, *self.sparring], seeds)
             pairs.merge(evaluation.pairs)
-            for sid, new in evaluation.scores.items():
-                scores[sid].extend(new)
+            for s in survivors:
+                scores[s.id].extend(evaluation.scores[s.id])
 
             rng = make_rng(self.seed, Stream.BOOTSTRAP, generation, r)
             alive = {s.id: scores[s.id] for s in survivors}

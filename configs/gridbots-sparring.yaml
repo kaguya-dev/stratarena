@@ -1,0 +1,29 @@
+# Grid Bots with the baselines as sparring partners: they play in every arena round robin
+# but are never ranked, so the population cannot drift into only beating itself.
+# Head-to-head game: strategies are ranked by points against each other (round robin,
+# both sides of every map); finalists also get Elo-scale ratings.
+seed: 42
+problem: gridbots
+problem_options:
+  size: 11
+  coin_pairs: 12
+  wall_density: 0.2
+  turns: 80
+population: 12
+generations: 6
+holdout_instances: 30
+tracking_instances: 20
+baselines_compete: false
+sparring: true
+arena:
+  instances_per_round: 3
+  elimination_fraction: 0.3
+  finalists: 4
+  max_rounds: 10
+  workers: 4
+  bootstrap_samples: 1000
+hybrid:
+  crossover_alpha: 0.3
+  mutation_rate: 0.3
+  mutation_scale: 0.15
+  immigrants: 2

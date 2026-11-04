@@ -60,6 +60,21 @@ Standard library only, at most 2 seconds per call; an exception, timeout or inva
 forfeits the game.
 """
 
+PARAM_GUIDE = """\
+A parametric bot scores each of its five moves (N, S, W, E, stay; ties go to the first)
+by the cell it would move to, with shortest-path distances `d` around walls and
+`scale = rows + cols`:
+
+    score = near    * (-min over coins of d(cell, coin) / scale)
+          + value   * (max over coins of value / (1 + d(cell, coin)) / 3)
+          + race    * (value of coins strictly closer to me than to the opponent
+                       - value of coins strictly closer to the opponent) / total value
+          + density * (sum over coins of value * exp(-d(cell, coin) / 3)) / total value
+          + spacing * d(cell, opponent) / scale
+
+Positive `spacing` keeps away from the opponent, negative chases it.
+"""
+
 CODE_EXAMPLE = """\
 from collections import deque
 
@@ -159,7 +174,7 @@ class GridBots:
         return [ParamStrategy(name, values, SPACE) for name, values in presets.items()]
 
     def code_spec(self) -> CodeSpec:
-        return CodeSpec("choose_move", CODE_DESCRIPTION, CODE_EXAMPLE)
+        return CodeSpec("choose_move", CODE_DESCRIPTION, CODE_EXAMPLE, PARAM_GUIDE)
 
     def generate_instance(self, seed: int) -> GridInstance:
         rng = np.random.default_rng(seed)

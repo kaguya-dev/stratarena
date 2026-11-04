@@ -60,9 +60,15 @@ class CodeGeneratorAgent:
             for f in ctx.finalists
         )
         notes = "\n".join(f"- {n}" for n in ctx.feedback[-6:]) or "- (none yet)"
+        guide = (
+            f"## How to read the parametric heuristics below\n\n{spec.param_guide}\n"
+            if spec.param_guide
+            else ""
+        )
         return (
             f"# Problem: {ctx.problem.name}\n\n{spec.description}\n"
             f"## Reference implementation (valid)\n\n```python\n{spec.example}```\n\n"
+            f"{guide}"
             f"## Best strategies after generation {ctx.generation}\n\n{best}\n\n"
             f"## Reviewer notes on earlier candidates\n\n{notes}\n\n"
             f"## Your task\n\nCandidate {index + 1} of {total}. "

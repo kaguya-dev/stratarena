@@ -117,3 +117,26 @@ def test_game_search_end_to_end(tmp_path: Path) -> None:
 def test_invalid_options() -> None:
     with pytest.raises(ValueError):
         GridBots(size=2)
+
+
+def test_sparring_partners_play_but_are_never_ranked(game: GridBots) -> None:
+    cfg = ArenaConfig(instances_per_round=2, finalists=2, bootstrap_samples=100)
+    sparring = game.baselines()
+    result = Arena(game, cfg, seed=0, sparring=sparring).run([GREEDY, LAZY, bot("mid", *[0.2] * 5)])
+    ranked = {s.strategy_id for r in result.rounds for s in r.standings}
+    assert ranked.isdisjoint({s.id for s in sparring})
+    assert set(result.scores) == {"greedy", "lazy", "mid"}
+    plain = Arena(game, cfg, seed=0).run([GREEDY, LAZY, bot("mid", *[0.2] * 5)])
+    assert result.scores["greedy"] != plain.scores["greedy"]
+
+
+def test_sparring_rules() -> None:
+    from stratarena.examples.binpacking import BinPacking
+
+    with pytest.raises(ValueError, match="game"):
+        Arena(BinPacking(), ArenaConfig(), 0, sparring=BinPacking().baselines())
+    game = GridBots(size=7)
+    with pytest.raises(ValueError, match="sparring partner"):
+        Arena(game, ArenaConfig(), 0, sparring=game.baselines()).run(game.baselines())
+    with pytest.raises(ValueError, match="compete or spar"):
+        RunConfig(problem="gridbots", sparring=True, baselines_compete=True)
