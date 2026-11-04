@@ -118,6 +118,18 @@ def render_report(run_dir: str | Path) -> Path:
     return md
 
 
+def problem_label(cfg: dict[str, Any]) -> str:
+    """Problem name plus its options, e.g. ``binpacking (n_items=120, profiles=triplets)``."""
+    opts = cfg["problem_options"]
+    if not opts:
+        return str(cfg["problem"])
+    parts = [
+        f"{k}={','.join(map(str, v)) if isinstance(v, list) else v}"
+        for k, v in sorted(opts.items())
+    ]
+    return f"{cfg['problem']} ({', '.join(parts)})"
+
+
 def _ci(s: dict[str, Any]) -> str:
     return f"{s['mean']:.4f} [{s['ci_low']:.4f}, {s['ci_high']:.4f}]"
 
@@ -128,6 +140,8 @@ def render_markdown(data: dict[str, Any]) -> str:
     champ = data["champion"]
     lines = [
         f"# stratarena run: {cfg['problem']}",
+        "",
+        f"Problem: `{problem_label(cfg)}`.",
         "",
         f"Seed `{cfg['seed']}`, {cfg['generations']} generations of {cfg['population']} "
         f"strategies, {len(val['instance_seeds'])} held-out instances. "
@@ -239,7 +253,7 @@ def plot_evolution(data: dict[str, Any], out: Path) -> None:
     n = data["config"]["tracking_instances"]
     ax.set_xlabel("generation")
     ax.set_ylabel(f"mean score on {n} fixed tracking instances")
-    ax.set_title(f"stratarena: {data['config']['problem']} (seed {data['config']['seed']})")
+    ax.set_title(f"{problem_label(data['config'])}, seed {data['config']['seed']}", fontsize=10)
     ax.set_xticks(gens)
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8, loc="lower right")

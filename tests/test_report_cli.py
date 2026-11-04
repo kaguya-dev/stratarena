@@ -52,6 +52,7 @@ def test_write_run_creates_artifacts(tmp_path: Path) -> None:
     md = (run_dir / "report.md").read_text()
     assert result.champion.id in md
     assert "Held-out validation" in md
+    assert "Problem: `binpacking (n_items=25)`" in md
 
 
 def test_report_is_regenerated_from_json(tmp_path: Path, config_file: Path) -> None:
@@ -122,3 +123,11 @@ def test_cli_rejects_unknown_problem(tmp_path: Path) -> None:
 def test_render_report_needs_run_json(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         render_report(tmp_path)
+
+
+def test_problem_label() -> None:
+    from stratarena.report import problem_label
+
+    assert problem_label({"problem": "x", "problem_options": {}}) == "x"
+    label = problem_label({"problem": "x", "problem_options": {"profiles": ["a", "b"], "n": 3}})
+    assert label == "x (n=3, profiles=a,b)"
