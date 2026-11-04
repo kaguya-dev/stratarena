@@ -2,22 +2,14 @@
 
 Each item goes to the feasible bin with the highest priority, a weighted sum of features of
 the placement. The first three parameters span the classic heuristics (first/best/worst
-fit, with or without sorting); the last three look at the items still to be placed:
+fit, with or without sorting); the next three look at the items still to be placed, and
+the last one lets the strategy open a new bin on purpose:
 
 - ``sort_fraction``: share of the items, largest first, that are placed before the rest
   (which keep their arrival order). 0 is a pure online heuristic, 1 is "decreasing".
 - ``fit_weight``: preference for the bin left with the least (positive, best fit) or the
   most (negative, worst fit) free space after placing the item.
 - ``first_weight``: preference for older bins (first fit).
-
-The last two look beyond the current item, which none of the classic heuristics do:
-
-- ``perfect_bonus``: extra preference for a placement that fills a bin exactly.
-- ``waste_weight``: penalty for leaving a gap smaller than every item still to be placed,
-  i.e. space that can no longer be used.
-
-With both at zero the heuristic is exactly the classic family, so the classic
-heuristics are points of the search space and serve as baselines.
 - ``exact_bonus``: bonus when the item fills the bin exactly.
 - ``waste_penalty``: penalty when the space left is smaller than every remaining item,
   i.e. guaranteed to stay empty.
