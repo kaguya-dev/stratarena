@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Protocol, TypeVar, runtime_checkable
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from stratarena.strategy import ParamSpace, ParamStrategy
 
@@ -38,6 +38,27 @@ class Problem(Protocol[InstanceT]):
     def evaluate(self, strategy: ParamStrategy, instance: InstanceT) -> EvalResult:
         """Run ``strategy`` on ``instance``."""
         ...
+
+
+@runtime_checkable
+class GameProblem(Protocol[InstanceT]):
+    """A two-player game: strategies are ranked by head-to-head results, not a score.
+
+    ``play`` returns the points of the first player: 1 for a win, 0.5 for a draw and 0 for
+    a loss. The arena plays every pair on both sides of each instance, so a first-player
+    advantage cancels out. Same picklability and determinism rules as ``Problem``.
+    """
+
+    name: str
+
+    def param_space(self) -> ParamSpace: ...
+
+    def generate_instance(self, seed: int) -> InstanceT: ...
+
+    def play(self, first: ParamStrategy, second: ParamStrategy, instance: InstanceT) -> float: ...
+
+
+AnyProblem = Problem[Any] | GameProblem[Any]
 
 
 @runtime_checkable

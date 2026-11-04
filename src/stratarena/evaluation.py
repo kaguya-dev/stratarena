@@ -3,20 +3,65 @@
 import multiprocessing
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, field
 from functools import partial
 from types import TracebackType
 from typing import Any, Self
 
-from stratarena.problem import Problem
+from stratarena.problem import AnyProblem, GameProblem
+from stratarena.rating import PairStats
 from stratarena.strategy import ParamStrategy
+
+# Per instance: one score per strategy, plus (a, b, points of a, games) for game problems.
+InstanceOutcome = tuple[list[float], list[tuple[str, str, float, int]]]
+
+
+@dataclass(frozen=True)
+class Evaluation:
+    scores: dict[str, list[float]]
+    """``{strategy_id: [score on seeds[0], score on seeds[1], ...]}``."""
+    pairs: PairStats = field(default_factory=PairStats)
+    """Head-to-head results (game problems in round-robin mode only)."""
+
+
+def _both_sides(problem: GameProblem[Any], a: ParamStrategy, b: ParamStrategy, inst: Any) -> float:
+    """Points of ``a`` over two games against ``b``, one as each player."""
+    return problem.play(a, b, inst) + (1.0 - problem.play(b, a, inst))
 
 
 def evaluate_on_instance(
-    problem: Problem[Any], strategies: Sequence[ParamStrategy], seed: int
-) -> list[float]:
-    """Score every strategy on the instance ``seed``. Runs inside worker processes."""
+    problem: AnyProblem,
+    strategies: Sequence[ParamStrategy],
+    opponents: Sequence[ParamStrategy] | None,
+    seed: int,
+) -> InstanceOutcome:
+    """Score every strategy on the instance ``seed``. Runs inside worker processes.
+
+    For a game, the score is the mean points per game: against every other strategy in
+    ``strategies`` (round robin), or against a fixed set of ``opponents`` when given.
+    """
     instance = problem.generate_instance(seed)
-    return [problem.evaluate(s, instance).score for s in strategies]
+    if not isinstance(problem, GameProblem):
+        return [problem.evaluate(s, instance).score for s in strategies], []
+
+    if opponents is not None:
+        scores = []
+        for s in strategies:
+            rivals = [o for o in opponents if o.id != s.id]
+            pts = sum(_both_sides(problem, s, o, instance) for o in rivals)
+            scores.append(pts / (2 * len(rivals)) if rivals else 0.5)
+        return scores, []
+
+    n = len(strategies)
+    points = [0.0] * n
+    pairs = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            pts = _both_sides(problem, strategies[i], strategies[j], instance)
+            points[i] += pts
+            points[j] += 2.0 - pts
+            pairs.append((strategies[i].id, strategies[j].id, pts, 2))
+    return [p / (2 * (n - 1)) if n > 1 else 0.5 for p in points], pairs
 
 
 class Evaluator:
@@ -49,12 +94,35 @@ class Evaluator:
             self._pool.shutdown()
             self._pool = None
 
-    def scores(
-        self, problem: Problem[Any], strategies: Sequence[ParamStrategy], seeds: Sequence[int]
-    ) -> dict[str, list[float]]:
-        """Return ``{strategy_id: [score on seeds[0], score on seeds[1], ...]}``."""
-        task = partial(evaluate_on_instance, problem, list(strategies))
+    def evaluate(
+        self,
+        problem: AnyProblem,
+        strategies: Sequence[ParamStrategy],
+        seeds: Sequence[int],
+        opponents: Sequence[ParamStrategy] | None = None,
+    ) -> Evaluation:
+        task = partial(
+            evaluate_on_instance,
+            problem,
+            list(strategies),
+            None if opponents is None else list(opponents),
+        )
         if self.workers > 1 and self._pool is None:
             raise RuntimeError("use Evaluator as a context manager when workers > 1")
         rows = list(self._pool.map(task, seeds) if self._pool else map(task, seeds))
-        return {s.id: [row[j] for row in rows] for j, s in enumerate(strategies)}
+        pairs = PairStats()
+        for _, instance_pairs in rows:
+            for a, b, pts, games in instance_pairs:
+                pairs.record(a, b, pts, games)
+        scores = {s.id: [row[0][j] for row in rows] for j, s in enumerate(strategies)}
+        return Evaluation(scores, pairs)
+
+    def scores(
+        self,
+        problem: AnyProblem,
+        strategies: Sequence[ParamStrategy],
+        seeds: Sequence[int],
+        opponents: Sequence[ParamStrategy] | None = None,
+    ) -> dict[str, list[float]]:
+        """Shortcut for ``evaluate(...).scores``."""
+        return self.evaluate(problem, strategies, seeds, opponents).scores

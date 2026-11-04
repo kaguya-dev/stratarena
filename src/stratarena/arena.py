@@ -3,14 +3,14 @@
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
 from stratarena.config import ArenaConfig
 from stratarena.evaluation import Evaluator
 from stratarena.log import get_logger
-from stratarena.problem import Problem
+from stratarena.problem import AnyProblem, GameProblem
+from stratarena.rating import PairStats
 from stratarena.seeding import Stream, derive_seed, make_rng
 from stratarena.stats import mean_ci, resample_indices
 from stratarena.strategy import ParamStrategy
@@ -44,6 +44,8 @@ class ArenaResult:
     finalists: tuple[ParamStrategy, ...]
     standings: tuple[Standing, ...]
     scores: dict[str, tuple[float, ...]]
+    ratings: dict[str, float]
+    """Elo-scale ratings of the finalists from their games against each other (games only)."""
 
 
 def bootstrap_standings(
@@ -69,9 +71,13 @@ class Arena:
     round), evaluates all survivors on the same instances, ranks them by mean score over
     all rounds so far and eliminates ``elimination_fraction`` of them, stopping once only
     ``finalists`` remain or ``max_rounds`` is reached.
+
+    For a game the score on an instance is the mean points per game against every other
+    survivor (round robin, both sides), so the ranking is by head-to-head wins; Elo-scale
+    ratings of the finalists are reported alongside.
     """
 
-    def __init__(self, problem: Problem[Any], config: ArenaConfig, seed: int) -> None:
+    def __init__(self, problem: AnyProblem, config: ArenaConfig, seed: int) -> None:
         self.problem = problem
         self.config = config
         self.seed = seed
@@ -100,13 +106,16 @@ class Arena:
         scores: dict[str, list[float]] = {c.id: [] for c in candidates}
         rounds: list[RoundRecord] = []
         standings: list[Standing] = []
+        pairs = PairStats()
 
         for r in range(cfg.max_rounds):
             seeds = tuple(
                 derive_seed(self.seed, Stream.TRAIN, generation, r, i)
                 for i in range(cfg.instances_per_round)
             )
-            for sid, new in evaluator.scores(self.problem, survivors, seeds).items():
+            evaluation = evaluator.evaluate(self.problem, survivors, seeds)
+            pairs.merge(evaluation.pairs)
+            for sid, new in evaluation.scores.items():
                 scores[sid].extend(new)
 
             rng = make_rng(self.seed, Stream.BOOTSTRAP, generation, r)
@@ -141,4 +150,5 @@ class Arena:
             finalists=tuple(by_id[s.strategy_id] for s in standings),
             standings=tuple(standings),
             scores={sid: tuple(v) for sid, v in scores.items()},
+            ratings=pairs.ratings(by_id) if isinstance(self.problem, GameProblem) else {},
         )

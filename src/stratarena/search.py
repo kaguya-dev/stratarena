@@ -1,14 +1,13 @@
 """The full search: arena, hybridization and elitism over generations, then validation."""
 
 from dataclasses import dataclass
-from typing import Any
 
 from stratarena.arena import Arena, ArenaResult
 from stratarena.config import RunConfig
 from stratarena.evaluation import Evaluator
 from stratarena.hybridizer import ParamHybridizer
 from stratarena.log import get_logger
-from stratarena.problem import HasBaselines, Problem
+from stratarena.problem import AnyProblem, GameProblem, HasBaselines
 from stratarena.seeding import Stream, derive_seed, make_rng
 from stratarena.strategy import ParamStrategy
 from stratarena.validation import ValidationResult, validate
@@ -26,6 +25,8 @@ class RunResult:
     tracking: tuple[dict[str, float], ...]
     """Per generation, each finalist's mean on the fixed tracking set."""
     baseline_tracking: dict[str, float]
+    mode: str
+    """``"score"`` for single-player problems, ``"game"`` for head-to-head games."""
 
     @property
     def champion(self) -> ParamStrategy:
@@ -33,14 +34,14 @@ class RunResult:
 
 
 def random_strategies(
-    problem: Problem[Any], seed: int, generation: int, n: int
+    problem: AnyProblem, seed: int, generation: int, n: int
 ) -> list[ParamStrategy]:
     rng = make_rng(seed, Stream.INIT, generation)
     space = problem.param_space()
     return [ParamStrategy.random(f"g{generation}-r{i:02d}", space, rng) for i in range(n)]
 
 
-def run_search(problem: Problem[Any], config: RunConfig) -> RunResult:
+def run_search(problem: AnyProblem, config: RunConfig) -> RunResult:
     """Run every generation and validate the last finalists on held-out instances.
 
     Generation 0 is random (plus the problem's baselines when ``baselines_compete``).
@@ -50,9 +51,12 @@ def run_search(problem: Problem[Any], config: RunConfig) -> RunResult:
     Arena instances change every round, so training means of different generations are not
     comparable. To show progress, each generation's finalists are also scored on a fixed
     *tracking* set. It is reported only and never influences selection; the held-out set
-    stays untouched until the end.
+    stays untouched until the end. In a game, tracking means the mean points per game
+    against the fixed pool of baselines (or against the other finalists if the problem has
+    no baselines).
     """
     baselines = problem.baselines() if isinstance(problem, HasBaselines) else []
+    is_game = isinstance(problem, GameProblem)
     arena = Arena(problem, config.arena, config.seed)
     hybridizer = ParamHybridizer(config.hybrid, config.seed)
 
@@ -69,7 +73,8 @@ def run_search(problem: Problem[Any], config: RunConfig) -> RunResult:
     ]
 
     def tracked(strategies: list[ParamStrategy]) -> dict[str, float]:
-        scores = evaluator.scores(problem, strategies, tracking_seeds)
+        opponents = baselines if is_game and baselines else None
+        scores = evaluator.scores(problem, strategies, tracking_seeds, opponents)
         return {sid: sum(v) / len(v) for sid, v in scores.items()}
 
     with Evaluator(config.arena.workers) as evaluator:
@@ -128,4 +133,5 @@ def run_search(problem: Problem[Any], config: RunConfig) -> RunResult:
         validation=validation,
         tracking=tuple(tracking),
         baseline_tracking=baseline_tracking,
+        mode="game" if is_game else "score",
     )

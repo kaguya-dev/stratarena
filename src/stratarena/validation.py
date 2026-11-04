@@ -2,13 +2,12 @@
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
 from stratarena.arena import Standing, bootstrap_standings
 from stratarena.evaluation import Evaluator
-from stratarena.problem import Problem
+from stratarena.problem import AnyProblem, GameProblem
 from stratarena.seeding import Stream, derive_seed, make_rng
 from stratarena.stats import mean_ci, resample_indices
 from stratarena.strategy import ParamStrategy
@@ -33,6 +32,8 @@ class HoldoutEntry:
     diff_mean: float
     diff_low: float
     diff_high: float
+    rating: float | None = None
+    """Elo-scale rating from the held-out round robin (games only)."""
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,7 @@ class ValidationResult:
 
 
 def validate(
-    problem: Problem[Any],
+    problem: AnyProblem,
     finalists: Sequence[ParamStrategy],
     train_means: Mapping[str, float],
     baselines: Sequence[ParamStrategy],
@@ -76,13 +77,19 @@ def validate(
     bootstrap_samples: int,
     evaluator: Evaluator,
 ) -> ValidationResult:
-    """Evaluate finalists (the first is the champion) and baselines on held-out instances."""
+    """Evaluate finalists (the first is the champion) and baselines on held-out instances.
+
+    For a game, everyone plays a round robin against everyone else (finalists and
+    baselines), and the score is the mean points per game against that field.
+    """
     if not finalists:
         raise ValueError("need at least one finalist")
     seeds = tuple(derive_seed(seed, Stream.HOLDOUT, i) for i in range(n_instances))
     finalist_ids = {f.id for f in finalists}
     extra = [b for b in baselines if b.id not in finalist_ids]
-    scores = evaluator.scores(problem, [*finalists, *extra], seeds)
+    evaluation = evaluator.evaluate(problem, [*finalists, *extra], seeds)
+    scores = evaluation.scores
+    ratings = evaluation.pairs.ratings(scores) if isinstance(problem, GameProblem) else {}
 
     rng = make_rng(seed, Stream.BOOTSTRAP, _HOLDOUT_BOOTSTRAP_KEY)
     standings = bootstrap_standings(scores, rng, bootstrap_samples)
@@ -104,6 +111,7 @@ def validate(
                 diff_mean=d_mean,
                 diff_low=d_low,
                 diff_high=d_high,
+                rating=ratings.get(s.strategy_id),
             )
         )
     return ValidationResult(seeds, champion_id, tuple(entries))

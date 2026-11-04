@@ -56,6 +56,7 @@ def _generation(population: tuple[ParamStrategy, ...], arena: ArenaResult) -> di
         ],
         "finalists": [s.id for s in arena.finalists],
         "standings": [_standing(s) for s in arena.standings],
+        "ratings": arena.ratings,
     }
 
 
@@ -73,6 +74,7 @@ def _validation(v: ValidationResult) -> dict[str, Any]:
                 "train_mean": e.train_mean,
                 "holdout": _standing(e.holdout),
                 "diff_vs_champion": {"mean": e.diff_mean, "low": e.diff_low, "high": e.diff_high},
+                "rating": e.rating,
             }
             for e in v.entries
         ],
@@ -84,6 +86,7 @@ def to_dict(result: RunResult) -> dict[str, Any]:
     return {
         "stratarena_version": __version__,
         "environment": {"python": platform.python_version(), "numpy": np.__version__},
+        "mode": result.mode,
         "config": result.config.model_dump(mode="json"),
         "champion": _strategy(result.champion),
         "baselines": [_strategy(b) for b in result.baselines],
@@ -134,10 +137,22 @@ def _ci(s: dict[str, Any]) -> str:
     return f"{s['mean']:.4f} [{s['ci_low']:.4f}, {s['ci_high']:.4f}]"
 
 
+def _elo(r: float | None) -> str:
+    return "—" if r is None else f"{r:.0f}"
+
+
 def render_markdown(data: dict[str, Any]) -> str:
     cfg = data["config"]
     val = data["validation"]
     champ = data["champion"]
+    game = data["mode"] == "game"
+    score_note = (
+        "Scores are mean points per game (win 1, draw 0.5, loss 0), each pair playing both "
+        "sides of every instance; Elo is a Bradley-Terry fit of the same games on the Elo "
+        "scale."
+        if game
+        else "Higher scores are better."
+    )
     lines = [
         f"# stratarena run: {cfg['problem']}",
         "",
@@ -149,6 +164,8 @@ def render_markdown(data: dict[str, Any]) -> str:
         f"NumPy {data['environment']['numpy']}.",
         "",
         "Reproduce with `stratarena run --config config.yaml` (config saved next to this file).",
+        "",
+        score_note,
         "",
         "## Champion",
         "",
@@ -164,17 +181,22 @@ def render_markdown(data: dict[str, Any]) -> str:
         "Train: mean over that generation's arena instances (new every round, so not "
         "comparable across generations), with 95% bootstrap interval. Tracking: the same "
         f"generation champion on a fixed set of {cfg['tracking_instances']} instances that never "
-        "influences selection, comparable across generations.",
+        "influences selection, comparable across generations"
+        + (", playing against the fixed pool of baselines." if game else "."),
         "",
-        "| Gen | Rounds | Champion | Train mean [95% CI] | Tracking mean | Finalists |",
-        "|---|---|---|---|---|---|",
+        "| Gen | Rounds | Champion | Train mean [95% CI] | Tracking mean |"
+        + (" Elo |" if game else "")
+        + " Finalists |",
+        "|---|---|---|---|---|" + ("---|" if game else "") + "---|",
     ]
     for g in data["generations"]:
         best = g["standings"][0]
+        sid = best["strategy_id"]
+        elo = f" {_elo(g['ratings'].get(sid))} |" if game else ""
         lines.append(
-            f"| {g['generation']} | {len(g['rounds'])} | `{best['strategy_id']}` | {_ci(best)} "
-            f"| {g['tracking'][best['strategy_id']]:.4f} "
-            f"| {', '.join(f'`{f}`' for f in g['finalists'])} |"
+            f"| {g['generation']} | {len(g['rounds'])} | `{sid}` | {_ci(best)} "
+            f"| {g['tracking'][sid]:.4f} |{elo} "
+            f"{', '.join(f'`{f}`' for f in g['finalists'])} |"
         )
     lines += [
         "",
@@ -183,8 +205,9 @@ def render_markdown(data: dict[str, Any]) -> str:
         "Instances never used during the search. Δ is the paired difference to the champion "
         "(positive means better than the champion), with 95% bootstrap interval.",
         "",
-        "| Strategy | Kind | Train mean | Held-out mean [95% CI] | Δ vs champion [95% CI] |",
-        "|---|---|---|---|---|",
+        "| Strategy | Kind | Train mean | Held-out mean [95% CI] | Δ vs champion [95% CI] |"
+        + (" Elo |" if game else ""),
+        "|---|---|---|---|---|" + ("---|" if game else ""),
     ]
     for e in val["entries"]:
         train = "—" if e["train_mean"] is None else f"{e['train_mean']:.4f}"
@@ -192,13 +215,23 @@ def render_markdown(data: dict[str, Any]) -> str:
         lines.append(
             f"| `{e['strategy_id']}` | {e['kind']} | {train} | {_ci(e['holdout'])} "
             f"| {d['mean']:+.4f} [{d['low']:+.4f}, {d['high']:+.4f}] |"
+            + (f" {_elo(e['rating'])} |" if game else "")
         )
-    verdict = (
-        "**Possible overfitting**: the champion's training mean is above its held-out interval."
-        if val["overfit_suspected"]
-        else "No sign of overfitting: the champion's training mean is within or below its "
-        "held-out interval."
-    )
+    if game:
+        verdict = (
+            "In a game the training and held-out scores are measured against different "
+            "fields (the other survivors vs. finalists plus baselines), so this gap is not an "
+            "overfitting measure; compare Δ and Elo on the held-out set instead."
+        )
+    elif val["overfit_suspected"]:
+        verdict = (
+            "**Possible overfitting**: the champion's training mean is above its held-out interval."
+        )
+    else:
+        verdict = (
+            "No sign of overfitting: the champion's training mean is within or below its "
+            "held-out interval."
+        )
     lines += [
         "",
         f"Generalization gap (train - held-out) for the champion: "
@@ -239,7 +272,11 @@ def plot_evolution(data: dict[str, Any], out: Path) -> None:
             color="0.5",
             linestyle=":",
             linewidth=1,
-            label="baselines" if i == 0 else None,
+            label=(
+                "baselines" + (" (vs the other baselines)" if data["mode"] == "game" else "")
+                if i == 0
+                else None
+            ),
         )
         ax.annotate(
             " = ".join(names),
@@ -252,7 +289,8 @@ def plot_evolution(data: dict[str, Any], out: Path) -> None:
 
     n = data["config"]["tracking_instances"]
     ax.set_xlabel("generation")
-    ax.set_ylabel(f"mean score on {n} fixed tracking instances")
+    what = "points vs baselines" if data["mode"] == "game" else "mean score"
+    ax.set_ylabel(f"{what} ({n} tracking instances)")
     ax.set_title(f"{problem_label(data['config'])}, seed {data['config']['seed']}", fontsize=10)
     ax.set_xticks(gens)
     ax.grid(alpha=0.3)
